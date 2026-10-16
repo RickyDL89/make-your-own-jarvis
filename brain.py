@@ -44,6 +44,31 @@ def _flags() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+PERSONA_MARK = "You are EDI"  # in every brain process's command line, and in nothing else on the machine
+
+
+def reap_orphans(log) -> None:
+    """Stop brain processes whose EDI server is gone (a previous run that was closed or killed).
+
+    Only processes carrying EDI's persona in their command line are considered, never anything else
+    called claude: other Claude Code sessions on the machine look very similar and must be left alone.
+    """
+    if os.name != "nt":
+        return
+    script = (
+        "$mine = Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'claude*' -and $_.CommandLine -like '*" + PERSONA_MARK + "*' };"
+        "foreach ($p in $mine) { if (-not (Get-Process -Id $p.ParentProcessId -ErrorAction SilentlyContinue)) { Stop-Process -Id $p.ProcessId -Force; Write-Output $p.ProcessId } }"
+    )
+    try:
+        proc = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],  # noqa: S603
+                              capture_output=True, text=True, timeout=20, creationflags=_flags())
+        reaped = [pid for pid in proc.stdout.split() if pid.strip().isdigit()]
+        if reaped:
+            log(f"Brain: stopped {len(reaped)} orphaned Claude session(s) from an earlier run")
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _explain(stderr: str, fallback: str) -> str:
     text = stderr.strip()
     low = text.lower()
@@ -122,6 +147,7 @@ class Session:
         """Start the process ahead of time, so the first reply isn't slow."""
         with self.lock:
             if not self.alive():
+                reap_orphans(self.log)
                 resume = self._saved_session()
                 self.start(resume)
                 self.log(f"Brain: Claude {self.model} starting" + (" (resuming)" if resume else ""))

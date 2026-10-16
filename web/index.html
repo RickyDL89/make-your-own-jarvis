@@ -107,10 +107,10 @@
   .comms {
     position: fixed;
     left: 26px;
-    bottom: 150px;
+    top: 64px;
     z-index: 3;
-    width: min(340px, 40vw);
-    max-height: 42vh;
+    width: min(330px, 34vw);
+    max-height: 26vh;
     overflow: hidden;
     padding: 12px 14px;
     background: rgba(6, 14, 24, 0.6);
@@ -124,7 +124,7 @@
   }
   .comms.show { opacity: 1; transform: none; }
   .commsTitle { font-family: "Orbitron", sans-serif; font-size: 10px; letter-spacing: 0.35em; color: var(--muted); margin-bottom: 8px; }
-  .comm { margin: 0 0 9px; font-size: 14px; line-height: 1.35; color: #bfe0ee; animation: commIn 0.4s ease-out; }
+  .comm { margin: 0 0 7px; font-size: 13px; line-height: 1.3; color: #bfe0ee; animation: commIn 0.4s ease-out; }
   .comm .chip { font-family: "Orbitron", sans-serif; font-size: 9px; letter-spacing: 0.22em; }
   .comm .arrow { margin: 0 6px; color: var(--muted); font-size: 11px; }
   .comm.old { opacity: 0.45; }
@@ -197,7 +197,7 @@
     text-align: center;
   }
   .wake small { font-family: "Rajdhani", sans-serif; font-size: 14px; letter-spacing: 0.15em; color: var(--muted); }
-  @media (max-width: 1100px) { .comms { width: min(280px, 46vw); max-height: 30vh; bottom: 175px; } .comm { font-size: 12px; } }
+  @media (max-width: 1100px) { .comms { width: min(260px, 40vw); max-height: 22vh; } .comm { font-size: 12px; } }
 </style>
 </head>
 <body class="state-idle">
@@ -254,6 +254,7 @@ uniform float u_rad[6];
 uniform float u_hue[6];
 uniform vec4 u_p[6];     // x: scale  y: seed  z: voice level  w: pulse
 uniform float u_alpha[6];
+uniform float u_energy[6];   // how hard she's thinking: 0.2 idle, 1.0 thinking
 
 float hash(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
@@ -304,7 +305,7 @@ vec3 stars(vec2 fc, float t) {
 
 // A planetary nebula at pos with radius R: a clumpy ring of warped noise, dark lanes, filaments
 // pointing inward, a dim interior and a star. Everything is coloured from one hue.
-vec3 nebula(vec2 fc, vec2 pos, float R, float hue, vec4 p, float alpha, float t) {
+vec3 nebula(vec2 fc, vec2 pos, float R, float hue, vec4 p, float alpha, float energy, float t) {
   float scale = p.x, seed = p.y, level = p.z, pulse = p.w;
   R *= scale * (1.0 + pulse * 0.08);
   if (R < 1.0) return vec3(0.0);
@@ -339,8 +340,17 @@ vec3 nebula(vec2 fc, vec2 pos, float R, float hue, vec4 p, float alpha, float t)
   float ang = atan(q.y, q.x);
   float fil = pow(noise(vec3(ang * 22.0, r * 6.0 - t * 0.1, seed * 3.0)), 4.0) * (0.4 + 0.9 * n2)
             * smoothstep(0.34, 0.56, r) * smoothstep(0.9, 0.6, r) * 1.6;
+  // thinking, made visible in the gas itself:
+  // veins of light threading the cloud, carrying pulses of brightness outward from the star
+  float veinMask = smoothstep(1.08, 0.92, r) * smoothstep(0.06, 0.22, r);
+  float vn = noise(vec3(q * 6.0 + (w - 0.5) * 2.0, tt * 2.0 + seed));
+  float vein = pow(1.0 - abs(2.0 * vn - 1.0), 9.0);
+  float flow = 0.5 + 0.5 * sin(n1 * 30.0 - r * 14.0 - t * (1.5 + 7.0 * energy));
+  float veins = vein * (0.2 + 0.8 * flow) * veinMask * (0.12 + 1.7 * energy);
+  // and waves of light rolling out from the star through the cloud while she thinks
+  float wave = pow(max(0.0, sin(r * 16.0 - t * (2.0 + 3.0 * energy) + n1 * 3.0)), 6.0) * max(0.0, energy - 0.25) * (band + inner * 1.5) * 1.1;
   // the star
-  float sg = min(0.004 / (r * r + 0.0009), 7.0) * (1.0 + level * 1.6 + pulse * 0.5);
+  float sg = min(0.004 / (r * r + 0.0009), 7.0) * (1.0 + level * 1.6 + pulse * 0.5 + energy * 0.3);
   float glint = (exp(-abs(q.x) * 36.0) * exp(-abs(q.y) * 3.5) + exp(-abs(q.y) * 36.0) * exp(-abs(q.x) * 3.5)) * 0.55 * (1.0 + level * 1.5);
   vec3 ringCol = hsl(hue, 0.9, 0.52);
   vec3 hotCol = hsl(hue + 26.0, 0.95, 0.8);
@@ -352,6 +362,8 @@ vec3 nebula(vec2 fc, vec2 pos, float R, float hue, vec4 p, float alpha, float t)
            + inCol * inner * (1.0 + level * 0.5)
            + outCol * outer
            + hotCol * fil
+           + mix(hotCol, vec3(1.0), 0.5) * veins
+           + mix(inCol, vec3(1.0), 0.6) * wave
            + mix(inCol, vec3(1.0), 0.75) * (sg + glint);
   return col * alpha;
 }
@@ -363,7 +375,7 @@ void main() {
   col += stars(fc, u_time);
   for (int i = 0; i < 6; i++) {
     if (i >= u_count) break;
-    col += nebula(fc, u_pos[i], u_rad[i], u_hue[i], u_p[i], u_alpha[i], u_time);
+    col += nebula(fc, u_pos[i], u_rad[i], u_hue[i], u_p[i], u_alpha[i], u_energy[i], u_time);
   }
   col = 1.0 - exp(-col * 1.15);   // soft tone map, so bright knots glow instead of clipping
   gl_FragColor = vec4(col, 1.0);
@@ -378,7 +390,7 @@ void main() {
   const typeBox = $('typeBox');
   const LABELS = { idle: 'Standing by', listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking' };
   const STATE_HUE = { listening: 190, speaking: 46 };   // fixed colours, so you always know what she's doing
-  const STATE_ENERGY = { idle: 0.45, listening: 0.75, thinking: 1.4, speaking: 0.95 };
+  const STATE_ENERGY = { idle: 0.2, listening: 0.4, thinking: 1.0, speaking: 0.6 };
   let calls = 'sir';
   let busy = false;
   let state = 'idle';
@@ -459,103 +471,78 @@ void main() {
     return (current + d * k + 360) % 360;
   }
 
-  function buildEdges(nodes) {
-    const edges = [];
-    const seen = new Set();
-    nodes.forEach((n, i) => {
-      const near = nodes.map((m, j) => ({ j, d: Math.hypot(m.bx - n.bx, m.by - n.by) }))
-        .filter((o) => o.j !== i && o.d < 0.6).sort((a, b) => a.d - b.d).slice(0, 3);
-      for (const o of near) {
-        const key = i < o.j ? i + ':' + o.j : o.j + ':' + i;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        edges.push([i, o.j]);
-      }
-    });
-    return edges;
-  }
-
+  // Lightning in the clouds. The gas itself (veins of light, thought waves) is drawn by the shader;
+  // this class adds branching arcs on top, rare while she's idle and a storm while she thinks.
   class Nebula {
     constructor(opts) {
       Object.assign(this, { x: 0, y: 0, r: 100, hue: 200, label: '', status: '', scale: 0, targetScale: 1,
-                            alpha: 1, energy: 0.45, level: 0, pulse: 0, nodes: 40, seed: Math.random() * 100 }, opts);
-      const nn = reduced ? Math.ceil(this.nodes / 2) : this.nodes;
-      const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(TAU * Math.random());
-      // neurons: some on the ring, most across the interior, so their links read as the nebula's own filaments
-      this.nodes = Array.from({ length: nn }, (_, i) => {
-        const onRing = i % 5 < 2;
-        const a = rand(0, TAU), d = onRing ? 0.78 + gauss() * 0.05 : 0.12 + Math.sqrt(Math.random()) * 0.55;
-        return { bx: Math.cos(a) * d, by: Math.sin(a) * d * 0.86, z: rand(-1, 1), x: 0, y: 0, ph: rand(0, TAU), sp: rand(0.15, 0.5),
-                 size: onRing ? rand(1, 1.7) : rand(1.3, 2.4), glow: 0, ring: 0, breath: rand(0, TAU) };
-      });
-      // dendrites: each link bows slightly to one side and remembers how recently a signal ran along it
-      this.edges = buildEdges(this.nodes).map(([i, j]) => ({ i, j, bulge: rand(-0.22, 0.22), heat: 0, w: rand(0.6, 1.3), cx: 0, cy: 0 }));
-      this.signals = [];
-      this.spin = rand(-0.035, 0.035);
+                            alpha: 1, energy: 0.2, level: 0, pulse: 0, seed: Math.random() * 100 }, opts);
+      this.bolts = [];
+      this.nextBolt = rand(0.5, 2);
     }
 
-    fire(e, dir, hops, speed = rand(0.5, 1.1)) {
-      this.signals.push({ e, dir, t: dir > 0 ? 0 : 1, speed, hops });
+    // a point inside the cloud, in the same squashed disc the shader draws
+    spot(rr, a) {
+      const R = this.r * this.scale;
+      return [this.x + Math.cos(a) * rr * R, this.y + Math.sin(a) * rr * R * 0.86];
+    }
+
+    strike(from, to, life) {
+      // midpoint displacement: a jagged main channel with a few side branches
+      const path = (ax, ay, bx, by, jitter, depth) => {
+        let pts = [[ax, ay], [bx, by]];
+        for (let d = 0; d < depth; d++) {
+          const next = [pts[0]];
+          for (let i = 1; i < pts.length; i++) {
+            const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
+            const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+            const off = (Math.random() - 0.5) * jitter * len;
+            next.push([(x1 + x2) / 2 - dy / len * off, (y1 + y2) / 2 + dx / len * off], pts[i]);
+          }
+          pts = next;
+        }
+        return pts;
+      };
+      const main = path(from[0], from[1], to[0], to[1], 0.7, 4);
+      const branches = [];
+      const count = 1 + Math.floor(Math.random() * 3);
+      for (let k = 0; k < count; k++) {
+        const i = 2 + Math.floor(Math.random() * (main.length - 4));
+        const [sx, sy] = main[i];
+        const ang = Math.atan2(to[1] - from[1], to[0] - from[0]) + (Math.random() - 0.5) * 1.6;
+        const len = Math.hypot(to[0] - from[0], to[1] - from[1]) * rand(0.2, 0.45);
+        branches.push(path(sx, sy, sx + Math.cos(ang) * len, sy + Math.sin(ang) * len, 0.8, 3));
+      }
+      this.bolts.push({ main, branches, age: 0, life, flicker: rand(0, TAU) });
     }
 
     update(dt, t) {
       this.scale += (this.targetScale - this.scale) * Math.min(1, dt * 4);
       this.pulse = Math.max(0, this.pulse - dt * 1.6);
-      const R = this.r * this.scale * (1 + this.pulse * 0.08);
-      // the whole lattice turns very slowly, and every neuron drifts a little on its own
-      const rot = t * this.spin, cr = Math.cos(rot), sr = Math.sin(rot);
-      for (const n of this.nodes) {
-        const wx = n.bx + Math.sin(t * n.sp + n.ph) * 0.03, wy = n.by + Math.cos(t * n.sp * 0.8 + n.ph) * 0.03;
-        n.x = this.x + (wx * cr - wy * sr) * R;
-        n.y = this.y + (wx * sr + wy * cr) * R;
-        n.glow = Math.max(0, n.glow - dt * 1.8);
-        n.ring = Math.max(0, n.ring - dt * 1.4);
+      // how often lightning strikes: now and then while idle, a storm while thinking or when a message lands
+      const rate = 0.25 + this.energy * this.energy * 5 + this.pulse * 6;
+      this.nextBolt -= dt;
+      if (this.nextBolt <= 0 && this.scale > 0.3 && !reduced) {
+        this.nextBolt = rand(0.4, 1.4) / rate;
+        const a = rand(0, TAU);
+        const fromStar = Math.random() < 0.55;
+        const from = fromStar ? this.spot(rand(0, 0.08), a) : this.spot(rand(0.2, 0.7), a);
+        const to = fromStar ? this.spot(rand(0.45, 0.8), a + rand(-0.5, 0.5)) : this.spot(rand(0.2, 0.7), a + rand(1.2, 2.6));
+        this.strike(from, to, rand(0.12, 0.3));
       }
-      for (const e of this.edges) {
-        e.heat = Math.max(0, e.heat - dt * 1.2);
-        const a = this.nodes[e.i], b = this.nodes[e.j];
-        e.cx = (a.x + b.x) / 2 - (b.y - a.y) * e.bulge;   // control point, off to one side
-        e.cy = (a.y + b.y) / 2 + (b.x - a.x) * e.bulge;
-      }
-      // new signals: more when she's thinking, when an agent is working, or when a message just landed
-      const rate = (this.energy + this.pulse * 2) * (reduced ? 1.5 : 3.2) * (this.nodes.length / 40);
-      if (this.edges.length && Math.random() < rate * dt) {
-        this.fire(Math.floor(Math.random() * this.edges.length), Math.random() < 0.5 ? 1 : -1, 2 + Math.floor(Math.random() * 4));
-      }
-      for (const s of this.signals) {
-        s.t += s.dir * s.speed * dt;
-        if (s.t >= 1 || s.t <= 0) {
-          const e = this.edges[s.e];
-          const at = s.dir > 0 ? e.j : e.i;
-          const node = this.nodes[at];
-          node.glow = 1;
-          node.ring = 1;
-          e.heat = 1;
-          s.dead = true;
-          if (s.hops > 0) {
-            // the neuron fires on: usually along another of its links, sometimes straight back
-            const onward = [];
-            this.edges.forEach((ed, k) => { if (k !== s.e && (ed.i === at || ed.j === at)) onward.push({ ed, k }); });
-            if (onward.length && Math.random() < 0.7) {
-              const pick = onward[Math.floor(Math.random() * onward.length)];
-              this.fire(pick.k, pick.ed.i === at ? 1 : -1, s.hops - 1, s.speed);
-            } else {
-              this.fire(s.e, -s.dir, s.hops - 1, s.speed);
-            }
-          }
-        }
-      }
-      this.signals = this.signals.filter((s) => !s.dead);
-      if (this.signals.length > 70) this.signals.splice(0, this.signals.length - 70);
+      for (const b of this.bolts) b.age += dt;
+      this.bolts = this.bolts.filter((b) => b.age < b.life + 0.5);
     }
 
     draw(t) {
       if (this.scale < 0.01) return;
       const R = this.r * this.scale * (1 + this.pulse * 0.08);
       const A = this.alpha * Math.min(1, this.scale);
-      const h = this.hue + 20;
+      const h = this.hue + 185;   // the interior's colour, so the arcs belong to the cloud
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       if (!gl) {
         // no WebGL: at least a soft glow where the gas would be
         const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, R);
@@ -567,60 +554,24 @@ void main() {
         ctx.arc(this.x, this.y, R, 0, TAU);
         ctx.fill();
       }
-      // dendrites: gently curved links that light up while a signal runs along them
-      ctx.lineCap = 'round';
-      for (const e of this.edges) {
-        const a = this.nodes[e.i], b = this.nodes[e.j];
-        ctx.lineWidth = e.w + e.heat * 1.2;
-        ctx.strokeStyle = `hsla(${h}, 90%, 82%, ${(0.05 + this.energy * 0.06 + e.heat * 0.5) * A})`;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.quadraticCurveTo(e.cx, e.cy, b.x, b.y);
-        ctx.stroke();
-      }
-      // somas: a soft halo that breathes, a bright core, and a ripple when one fires
-      for (const n of this.nodes) {
-        const s = n.size * (0.75 + 0.25 * n.z) * (0.85 + 0.15 * Math.sin(t * 1.3 + n.breath));
-        const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, s * 5);
-        halo.addColorStop(0, `hsla(${h}, 100%, 85%, ${(0.22 + n.glow * 0.6) * A})`);
-        halo.addColorStop(1, `hsla(${h}, 100%, 80%, 0)`);
-        ctx.fillStyle = halo;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, s * 5, 0, TAU);
-        ctx.fill();
-        ctx.fillStyle = `hsla(${h}, 100%, ${92 + n.glow * 8}%, ${(0.75 + n.glow * 0.25) * A})`;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, s * (1 + n.glow * 0.6), 0, TAU);
-        ctx.fill();
-        if (n.ring > 0) {
-          const k = 1 - n.ring;
-          ctx.lineWidth = 0.3 + 1.2 * n.ring;
-          ctx.strokeStyle = `hsla(${h}, 100%, 88%, ${n.ring * 0.7 * A})`;
+      for (const b of this.bolts) {
+        const alive = b.age < b.life;
+        const k = alive ? 1 : 1 - (b.age - b.life) / 0.5;   // the afterglow fades out
+        const flick = alive ? 0.6 + 0.4 * Math.abs(Math.sin(b.age * 60 + b.flicker)) : 0.3;
+        const stroke = (pts, wGlow, wCore, aGlow, aCore) => {
           ctx.beginPath();
-          ctx.arc(n.x, n.y, s * (2 + k * 9), 0, TAU);
+          pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          ctx.lineWidth = wGlow;
+          ctx.strokeStyle = `hsla(${h}, 100%, 75%, ${aGlow})`;
           ctx.stroke();
-        }
-      }
-      // signals: luminous pulses running along the dendrites, each with a glowing tail
-      for (const sg of this.signals) {
-        const e = this.edges[sg.e], a = this.nodes[e.i], b = this.nodes[e.j];
-        const P = (u) => { const v = 1 - u; return [v * v * a.x + 2 * v * u * e.cx + u * u * b.x, v * v * a.y + 2 * v * u * e.cy + u * u * b.y]; };
-        for (let k = 9; k >= 0; k--) {
-          const [px, py] = P(Math.min(1, Math.max(0, sg.t - sg.dir * k * 0.028)));
-          const f = 1 - k / 10;
-          ctx.fillStyle = `hsla(${h}, 100%, ${k ? 86 : 98}%, ${f * f * 0.9 * A})`;
-          ctx.beginPath();
-          ctx.arc(px, py, 0.8 + f * 2.2, 0, TAU);
-          ctx.fill();
-        }
-        const [hx, hy] = P(Math.min(1, Math.max(0, sg.t)));
-        const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, 11);
-        halo.addColorStop(0, `hsla(${h}, 100%, 88%, ${0.6 * A})`);
-        halo.addColorStop(1, `hsla(${h}, 100%, 85%, 0)`);
-        ctx.fillStyle = halo;
-        ctx.beginPath();
-        ctx.arc(hx, hy, 11, 0, TAU);
-        ctx.fill();
+          if (aCore > 0) {
+            ctx.lineWidth = wCore;
+            ctx.strokeStyle = `hsla(${h}, 60%, 98%, ${aCore})`;
+            ctx.stroke();
+          }
+        };
+        stroke(b.main, 7, 1.6, 0.22 * k * flick * A, (alive ? 0.95 : 0) * flick * A);
+        for (const br of b.branches) stroke(br, 4, 1, 0.14 * k * flick * A, (alive ? 0.7 : 0) * flick * A);
       }
       ctx.restore();
       // name and status, for agents
@@ -677,19 +628,22 @@ void main() {
     const loc = gl.getAttribLocation(gasProgram, 'a');
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    for (const name of ['u_res', 'u_time', 'u_count', 'u_pos', 'u_rad', 'u_hue', 'u_p', 'u_alpha']) gasU[name] = gl.getUniformLocation(gasProgram, name);
+    for (const name of ['u_res', 'u_time', 'u_count', 'u_pos', 'u_rad', 'u_hue', 'u_p', 'u_alpha', 'u_energy']) gasU[name] = gl.getUniformLocation(gasProgram, name);
   }
   function drawGas(t, bodies) {
     if (!gl) return;
     const n = Math.min(6, bodies.length);
-    const pos = new Float32Array(12), rad = new Float32Array(6), hue = new Float32Array(6), p = new Float32Array(24), alpha = new Float32Array(6);
+    const pos = new Float32Array(12), rad = new Float32Array(6), hue = new Float32Array(6), p = new Float32Array(24), alpha = new Float32Array(6), energy = new Float32Array(6);
     bodies.slice(0, n).forEach((b, i) => {
       pos[i * 2] = b.x * gasScale; pos[i * 2 + 1] = b.y * gasScale;
       rad[i] = b.r * gasScale;
       hue[i] = b.hue;
       p[i * 4] = b.scale; p[i * 4 + 1] = b.seed; p[i * 4 + 2] = b.level; p[i * 4 + 3] = b.pulse;
       alpha[i] = b.alpha * Math.min(1, b.scale * 1.5);
+      b.shownEnergy = (b.shownEnergy ?? b.energy) + (b.energy - (b.shownEnergy ?? b.energy)) * 0.04;  // eases, so the gas doesn't snap
+      energy[i] = b.shownEnergy;
     });
+    gl.uniform1fv(gasU.u_energy, energy);
     gl.uniform2f(gasU.u_res, gasCanvas.width, gasCanvas.height);
     gl.uniform1f(gasU.u_time, t);
     gl.uniform1i(gasU.u_count, n);
@@ -704,7 +658,7 @@ void main() {
   let gasScale = 1;
 
   // ---- EDI in the middle, agents around her, packets flying between them
-  const edi = new Nebula({ hue: 200, energy: 0.45, nodes: 44, seed: 7.3 });
+  const edi = new Nebula({ hue: 200, energy: 0.2, seed: 7.3 });
   edi.targetScale = 1;
   const agentsById = new Map();
   const packets = [];
@@ -814,7 +768,7 @@ void main() {
   }
   function ensureAgent(info) {
     if (agentsById.has(info.id)) return agentsById.get(info.id);
-    const a = new Nebula({ id: info.id, hue: info.hue, label: info.name, status: info.status, energy: 1.1, nodes: 26, seed: 11 + info.id * 3.7 });
+    const a = new Nebula({ id: info.id, hue: info.hue, label: info.name, status: info.status, energy: 1.0, seed: 11 + info.id * 3.7 });
     a.slot = freeSlot();
     placeAgent(a);
     a.scale = 0;
@@ -831,12 +785,12 @@ void main() {
     const chip = (name, hue) => { const s = document.createElement('span'); s.className = 'chip'; s.textContent = name.toUpperCase(); s.style.color = `hsl(${hue}, 90%, 72%)`; return s; };
     const arrow = document.createElement('span'); arrow.className = 'arrow'; arrow.textContent = '→';
     const body = document.createElement('div');
-    body.textContent = text.length > 170 ? text.slice(0, 168).replace(/\s+\S*$/, '') + '…' : text;
+    body.textContent = text.length > 140 ? text.slice(0, 138).replace(/\s+\S*$/, '') + '…' : text;
     body.title = text;
     el.append(chip(from, hueFrom), arrow, chip(to, hueTo), body);
     list.append(el);
-    [...list.children].forEach((c, i, arr) => c.classList.toggle('old', i < arr.length - 3));
-    while (list.children.length > 8) list.firstChild.remove();
+    [...list.children].forEach((c, i, arr) => c.classList.toggle('old', i < arr.length - 2));
+    while (list.children.length > 4) list.firstChild.remove();
     $('comms').classList.add('show');
     $('comms').scrollTop = 1e6;
     clearTimeout(addComm.hideTimer);
@@ -850,19 +804,37 @@ void main() {
       const other = a || agentByName(fromEdi ? ev.to : ev.from);
       if (other) packets.push({ from: fromEdi ? edi : other, to: fromEdi ? other : edi, t: 0, dur: 1.1, hue: fromEdi ? edi.hue : other.hue });
       addComm(ev.from, ev.to, ev.text, fromEdi ? edi.hue : (other ? other.hue : 200), fromEdi ? (other ? other.hue : 200) : edi.hue);
-      if (!fromEdi) edi.energy = Math.max(edi.energy, 0.9);
       return;
     }
     if (!a) return;
     if (ev.type === 'agent_status') {
       a.status = ev.status;
-      a.energy = { working: 1.3, 'asking EDI': 0.8, done: 0.35, failed: 0.25 }[ev.status] ?? 0.8;
+      a.energy = { working: 1.0, 'asking EDI': 0.6, done: 0.2, failed: 0.15 }[ev.status] ?? 0.6;
     }
     if (ev.type === 'agent_done') {
       if (ev.speak) announce(ev.speak);
       setTimeout(() => { a.retiring = true; a.targetScale = 0; }, 7000);
     }
   }
+  // Only one EDI tab speaks for the agents. Every open tab sees the same events, so without this
+  // two or three copies of her would announce the same report over each other.
+  const TAB_ID = Math.random().toString(36).slice(2);
+  function isSpeaker() {
+    try {
+      const now = Date.now();
+      const visible = document.visibilityState === 'visible';
+      const cur = JSON.parse(localStorage.getItem('edi-speaker') || 'null');
+      const stale = !cur || now - cur.t > 3500;
+      if (stale || cur.id === TAB_ID || (visible && cur.hidden)) {
+        localStorage.setItem('edi-speaker', JSON.stringify({ id: TAB_ID, t: now, hidden: !visible }));
+        return true;
+      }
+      return false;
+    } catch {
+      return true;
+    }
+  }
+  setInterval(isSpeaker, 1000);
   function announce(text) {
     announcements.push(text);
     drainAnnouncements();
@@ -871,7 +843,7 @@ void main() {
     if (busy || state !== 'idle' || !announcements.length) return;
     const text = announcements.shift();
     showExchange('', text);
-    speak(text);
+    if (isSpeaker()) speak(text);
   }
   let eventSeq = null;
   async function pollEvents() {

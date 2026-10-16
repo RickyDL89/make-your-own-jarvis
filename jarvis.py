@@ -37,7 +37,8 @@ DEFAULTS = {
     "FISH_MODEL": "s2.1-pro-free",  # S2.1 Pro at $0, free on the Fish Audio API until Nov 30, 2026
     "OPENROUTER_MODEL": "apodex/apodex-1.1-mini:free",  # the OpenRouter brain, used when Claude Code isn't installed
     "BRAIN": "",  # "claude" or "openrouter". Empty means: Claude Code if it's installed, else OpenRouter
-    "CLAUDE_MODEL": brain.DEFAULT_MODEL,  # the Claude Code brain. Haiku is quick, which matters when it's spoken
+    "CLAUDE_MODEL": brain.DEFAULT_MODEL,  # the Claude Code brain for conversation. Haiku is quick, which matters when it's spoken
+    "CLAUDE_AGENT_MODEL": "claude-opus-5-5",  # the model agents and tasks think with, where quality matters more than speed
     "JARVIS_CALLS_YOU": "sir",
     "EDI_LOCATION": "",  # your city, for the weather. Empty means: work it out from the connection
     "BRAVE_API_KEY": "",  # optional, for real web search. Free at https://brave.com/search/api
@@ -228,7 +229,7 @@ def llm(cfg: dict[str, str], messages: list[dict], max_tokens: int = 4000) -> st
         else:  # a conversation, flattened: Claude sees who said what
             prompt = "\n\n".join(("User: " if m["role"] == "user" else "Assistant: ") + m["content"] for m in turns) + "\n\nAssistant:"
         try:
-            return brain.complete(cfg["CLAUDE_MODEL"], system, prompt)
+            return brain.complete(cfg["CLAUDE_AGENT_MODEL"], system, prompt)
         except brain.BrainError:
             if not cfg.get("OPENROUTER_API_KEY"):
                 raise
@@ -592,6 +593,9 @@ def main() -> None:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n  EDI offline. Goodbye.\n")
+    finally:
+        if _claude:
+            _claude.stop()  # take the brain down with her
 
 
 if __name__ == "__main__":

@@ -8,8 +8,10 @@ question with her brain; the skills kick in automatically when what you say matc
 
 EDI is a planetary nebula drawn by a WebGL shader: a clumpy ring of gas with dark lanes and a bright
 inner rim, fine filaments pointing at a central star, a translucent interior and a faint outer shell,
-all drifting slowly. A lattice of neurons sits inside with signals running along the links and
-bouncing back and forth. Her colour walks around the whole spectrum while she is idle or thinking
+all drifting slowly. You can see her think: veins of light thread the cloud and carry pulses outward
+from the star, waves of light roll out through the gas, and lightning flickers through the interior,
+all rare while she is idle and a storm while she works out an answer or an agent reports in. Her
+colour walks around the whole spectrum while she is idle or thinking
 (the ring and the interior always stay complementary); **listening is always cyan** and **speaking is
 always gold**, so you can tell what she is doing at a glance. Her voice makes the star breathe. Click
 the nebula to talk, the same as holding Space. Without WebGL the gas falls back to a soft glow.
@@ -100,7 +102,8 @@ and an OpenRouter key is set, she falls back to it for that reply.
 | Setting | What it does | Default |
 |---|---|---|
 | `BRAIN` | `claude` or `openrouter` | Claude Code if installed, else OpenRouter |
-| `CLAUDE_MODEL` | The Claude model she thinks with | `claude-haiku-5-5` |
+| `CLAUDE_MODEL` | The Claude model she talks with | `claude-haiku-5-5` (this machine: Opus 5.5) |
+| `CLAUDE_AGENT_MODEL` | The Claude model agents and tasks think with | `claude-opus-5-5` |
 | `EDI_LOCATION` | Your city, for the weather | worked out from your connection |
 | `BRAVE_API_KEY` | Optional key for real web search | off |
 
