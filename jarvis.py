@@ -17,6 +17,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import agents
 import skills
 
 ROOT = Path(__file__).resolve().parent
@@ -182,17 +183,12 @@ def openrouter_post(cfg: dict[str, str], payload: dict) -> dict:
     return data
 
 
-def think(cfg: dict[str, str], text: str, context: str | None = None) -> str:
-    """Ask the brain. `context` is live data a skill just fetched (weather, search results, calendar)."""
-    with _lock:
-        messages = list(_history) + [{"role": "user", "content": text}]
-    system = [{"role": "system", "content": system_prompt(cfg)}]
-    if context:
-        system.append({"role": "system", "content": context})
+def llm(cfg: dict[str, str], messages: list[dict], max_tokens: int = 4000) -> str:
+    """One call to the brain with any messages. Agents use this with their own persona."""
     payload = {
         "model": cfg["OPENROUTER_MODEL"],
-        "messages": [*system, *messages],
-        "max_tokens": 4000,
+        "messages": messages,
+        "max_tokens": max_tokens,
         "reasoning": {"effort": "none"},  # skip the thinking step, so spoken replies come back fast
     }
     try:
@@ -204,13 +200,26 @@ def think(cfg: dict[str, str], text: str, context: str | None = None) -> str:
         data = openrouter_post(cfg, payload)
     choices = data.get("choices") or [{}]
     content = (choices[0].get("message") or {}).get("content")
-    reply = " ".join(content.split()) if isinstance(content, str) else ""
-    reply = reply or f"I'm not sure what to say to that, {cfg['JARVIS_CALLS_YOU']}."
+    return " ".join(content.split()) if isinstance(content, str) else ""
+
+
+def think(cfg: dict[str, str], text: str, context: str | None = None, remember: bool = True) -> str:
+    """Ask the brain as EDI. `context` is live data a skill just fetched (weather, search results, calendar)."""
     with _lock:
-        _history.extend([{"role": "user", "content": text}, {"role": "assistant", "content": reply}])
-        del _history[:-16]  # keep the last 8 exchanges
-        skills.save_history(list(_history))
+        messages = list(_history) + [{"role": "user", "content": text}]
+    system = [{"role": "system", "content": system_prompt(cfg)}]
+    if context:
+        system.append({"role": "system", "content": context})
+    reply = llm(cfg, [*system, *messages]) or f"I'm not sure what to say to that, {cfg['JARVIS_CALLS_YOU']}."
+    if remember:
+        with _lock:
+            _history.extend([{"role": "user", "content": text}, {"role": "assistant", "content": reply}])
+            del _history[:-16]  # keep the last 8 exchanges
+            skills.save_history(list(_history))
     return reply
+
+
+AGENTS = agents.Runtime(llm=llm, think=think, live_context=skills.live_context, log=log)
 
 
 def brain_error(err: OpenRouterError, cfg: dict[str, str]) -> str:
@@ -350,6 +359,15 @@ class Handler(BaseHTTPRequestHandler):
                 "calls": cfg["JARVIS_CALLS_YOU"],
                 "protocols": [p["say"] for p in load_protocols()],
             })
+        elif path == "/api/events":
+            # The HUD polls this to draw agents and the messages flying between them and EDI.
+            query = dict(pair.split("=", 1) for pair in self.path.split("?", 1)[1].split("&") if "=" in pair) if "?" in self.path else {}
+            try:
+                since = int(query.get("since", ""))
+            except ValueError:
+                since = None
+            events, seq = AGENTS.events_since(since) if since is not None else ([], AGENTS.events_since(0)[1])
+            self._json(200, {"seq": seq, "events": events, "agents": AGENTS.active()})
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -383,6 +401,17 @@ class Handler(BaseHTTPRequestHandler):
                 reply = str(protocol.get("reply") or "Right away, {you}.").replace("{you}", title)
                 log(f"EDI:    {reply}  (protocol)")
                 self._json(200, {"reply": reply, "protocol": protocol["say"]})
+                return
+            # Agents: "spawn a research agent to ..." puts a helper on the HUD that reports back later.
+            wanted = AGENTS.parse(text)
+            if wanted:
+                if not cfg.get("OPENROUTER_API_KEY"):
+                    self._json(200, {"reply": f"I can't spawn agents without a brain, {title}. Add OPENROUTER_API_KEY to the .env file.", "error": "brain"})
+                    return
+                spawned = AGENTS.demo(cfg) if wanted.get("demo") else [AGENTS.spawn(cfg, wanted["role"], wanted["task"])]
+                reply = AGENTS.acknowledgement(spawned, title)
+                log(f"EDI:    {reply}  (agents)")
+                self._json(200, {"reply": reply, "skill": "agents", "agents": [a["id"] for a in spawned]})
                 return
             # Skills: things EDI does herself (open an app, remember a fact) answer right away.
             # Things that need live data (weather, search, Outlook) fetch it, then let the brain answer.
@@ -471,7 +500,7 @@ def main() -> None:
     print(f"    Open {url}  (Chrome or Edge, for voice input)")
     print(f"    Voice: Fish Audio {cfg['FISH_VOICE_ID']} ({cfg['FISH_MODEL']})")
     print(f"    Brain: OpenRouter {cfg['OPENROUTER_MODEL']}" if cfg.get("OPENROUTER_API_KEY") else "    Brain: not connected yet")
-    print("    Skills: open apps and files, memory, weather, web search, Outlook")
+    print("    Skills: open apps and files, memory, weather, web search, Outlook, agents")
     print("    Close this window to shut EDI down.")
     print("  ==================================================\n")
     if not NO_BROWSER:

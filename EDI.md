@@ -4,6 +4,31 @@ EDI is this JARVIS build renamed and given skills. Everything below works by voi
 or say **"EDI"** with the wake word on) or by typing in the box. She still answers any normal
 question with her brain; the skills kick in automatically when what you say matches one.
 
+## The look
+
+EDI is a nebula: drifting gas with a lattice of neurons inside, and signals that run along the links
+and bounce back and forth. Her colour walks around the whole spectrum while she is idle or thinking;
+**listening is always cyan** and **speaking is always gold**, so you can tell what she is doing at a
+glance. Her voice drives the pulse of the core. Click the nebula to talk, the same as holding Space.
+
+## Agents
+
+- **"Spawn a research agent to find the latest news about Eskom."**
+- **"Delegate the weekend forecast to a weather agent."**
+- **"Get a planner agent to break my Saturday into a schedule."**
+- **"Test your agents"** — spawns a Researcher and an Analyst that each have to ask EDI a question
+  first, so you can watch them talk.
+
+An agent appears beside EDI as a smaller nebula in its own fixed colour (orange, green, violet,
+pink, blue, yellow, in spawn order) with a dashed link to her. Packets fly along the link whenever
+one of them sends the other a message, and the **AGENT COMMS** panel at the left shows what was
+said. The agent works on its own thread with its own persona (`research`, `analyst`, `writer`,
+`coder`, `planner`, `weather`, `travel`, `scout`, or a generalist), can use EDI's live-data skills,
+may ask EDI one clarifying question, and reports back. EDI then tells you the result out loud, and
+the agent fades away a few seconds later. Several agents can run at once.
+
+Agent roles and colours live at the top of [agents.py](agents.py).
+
 ## Talk to her without touching anything
 
 Click **WAKE WORD · OFF** at the top right of the page to turn it on. Then:

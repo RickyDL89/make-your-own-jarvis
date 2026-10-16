@@ -620,6 +620,17 @@ def outlook_skill(text: str, you: str) -> Result | None:
 
 # ---------------------------------------------------------------- dispatcher
 
+def live_context(cfg: dict[str, str], text: str) -> str | None:
+    """Only the look-things-up skills, for agents: never opens apps or touches memory."""
+    you = cfg["JARVIS_CALLS_YOU"]
+    for skill in (lambda t: weather_skill(cfg, t, you), lambda t: fx_skill(t, you),
+                  lambda t: outlook_skill(t, you), lambda t: search_skill(cfg, t, you)):
+        result = skill(text)
+        if result:
+            return result.context or result.reply
+    return None
+
+
 def handle(cfg: dict[str, str], text: str) -> Result | None:
     """Decide whether EDI can do something with what was said. None means: just chat."""
     you = cfg["JARVIS_CALLS_YOU"]
@@ -644,6 +655,7 @@ ABILITIES = (
     "open apps, files, folders and websites on their computer (\"open Excel\", \"open my downloads folder\"); "
     "remember facts across restarts (\"remember that...\", \"what do you remember\", \"forget...\"); "
     "report live weather and forecasts; give live exchange rates; search the web and the news for current information; "
-    "and read their Outlook calendar and unread inbox. "
+    "read their Outlook calendar and unread inbox; and spawn agents that work on a task and report back "
+    "(\"spawn a research agent to...\"). "
     "Other things on the computer you can't do yet, say so briefly if asked. "
 )

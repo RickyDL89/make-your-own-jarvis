@@ -11,8 +11,7 @@
   :root {
     --bg: #02060c;
     --cyan: #3fd8ff;
-    --glow: rgba(63, 216, 255, 0.35);
-    --amber: #ffb347;
+    --gold: #ffd166;
     --red: #ff5a5f;
     --text: #d9f6ff;
     --muted: #6f93a6;
@@ -22,24 +21,16 @@
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: radial-gradient(ellipse at center, #062033 0%, var(--bg) 70%);
+    background: radial-gradient(ellipse at center, #050d18 0%, var(--bg) 70%);
     color: var(--text);
     font-family: "Rajdhani", "Segoe UI", system-ui, sans-serif;
     overflow: hidden;
   }
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(63, 216, 255, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(63, 216, 255, 0.04) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-  }
+  #scene { position: fixed; inset: 0; z-index: 0; display: block; }
   header {
     position: fixed;
     top: 0; left: 0; right: 0;
+    z-index: 2;
     display: flex;
     justify-content: space-between;
     padding: 18px 26px;
@@ -60,14 +51,12 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .dot.on { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
   .dot.off { background: var(--red); box-shadow: 0 0 10px var(--red); }
-  main {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 22px;
-    padding-bottom: 120px;
+  .title {
+    position: fixed;
+    top: 62px; left: 0; right: 0;
+    z-index: 1;
+    text-align: center;
+    pointer-events: none;
   }
   h1 {
     margin: 0;
@@ -76,33 +65,22 @@
     font-weight: 700;
     font-size: clamp(22px, 3vw, 34px);
     letter-spacing: 0.5em;
-    color: var(--cyan);
-    text-shadow: 0 0 18px var(--glow);
+    color: var(--accent);
+    text-shadow: 0 0 18px var(--accent);
+    transition: color 0.6s, text-shadow 0.6s;
   }
-  .sub { margin-top: -14px; font-size: 12px; letter-spacing: 0.3em; color: var(--muted); text-transform: uppercase; }
-  .reactor { position: relative; width: min(42vh, 360px); aspect-ratio: 1; cursor: pointer; --level: 0; }
-  .ring { position: absolute; border-radius: 50%; }
-  .r1 { inset: 0; border: 2px dashed var(--accent); opacity: 0.45; animation: spin 24s linear infinite; }
-  .r2 { inset: 7%; border: 3px solid transparent; border-top-color: var(--accent); border-bottom-color: var(--accent); opacity: 0.75; animation: spin 9s linear infinite reverse; }
-  .r3 { inset: 15%; border: 1px solid var(--accent); opacity: 0.35; }
-  .r4 { inset: 20%; border: 6px solid transparent; border-left-color: var(--accent); border-right-color: var(--accent); opacity: 0.6; animation: spin 5s linear infinite; }
-  .core {
-    position: absolute;
-    inset: 31%;
-    border-radius: 50%;
-    background: radial-gradient(circle, #ffffff 0%, var(--accent) 35%, rgba(63, 216, 255, 0.15) 70%, transparent 72%);
-    box-shadow: 0 0 calc(30px + var(--level) * 90px) var(--accent), inset 0 0 30px rgba(255, 255, 255, 0.4);
-    transform: scale(calc(1 + var(--level) * 0.35));
-    transition: transform 0.06s linear, box-shadow 0.06s linear;
+  .sub { margin-top: 4px; font-size: 12px; letter-spacing: 0.3em; color: var(--muted); text-transform: uppercase; }
+  .below {
+    position: fixed;
+    left: 0; right: 0;
+    top: calc(42vh + 0.2 * min(100vw, 100vh) + 26px);
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    pointer-events: none;
   }
-  .state-listening { --accent: #7ff3ff; }
-  .state-listening .r2 { animation-duration: 2.5s; }
-  .state-listening .r4 { animation-duration: 1.6s; }
-  .state-listening .core { animation: breathe 1s ease-in-out infinite; }
-  .state-thinking { --accent: var(--amber); }
-  .state-thinking .r2, .state-thinking .r4 { animation-duration: 1.2s; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes breathe { 50% { filter: brightness(1.35); } }
   .status {
     min-height: 18px;
     font-family: "Orbitron", sans-serif;
@@ -110,36 +88,64 @@
     letter-spacing: 0.35em;
     color: var(--accent);
     text-transform: uppercase;
+    transition: color 0.6s;
   }
   .log {
     width: min(760px, 92vw);
     min-height: 86px;
     padding: 14px 18px;
     background: var(--panel);
-    border: 1px solid rgba(63, 216, 255, 0.18);
+    border: 1px solid rgba(120, 190, 220, 0.16);
     border-radius: 14px;
     backdrop-filter: blur(6px);
+    pointer-events: auto;
   }
   .line { margin: 2px 0; font-size: 19px; line-height: 1.4; }
   .who { margin-right: 10px; font-family: "Orbitron", sans-serif; font-size: 11px; letter-spacing: 0.25em; color: var(--muted); }
   .you .txt { color: #a9c7d6; }
+  .comms {
+    position: fixed;
+    left: 26px;
+    bottom: 150px;
+    z-index: 2;
+    width: min(340px, 40vw);
+    max-height: 42vh;
+    overflow: hidden;
+    padding: 12px 14px;
+    background: rgba(6, 14, 24, 0.6);
+    border: 1px solid rgba(120, 190, 220, 0.14);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    transform: translateX(-12px);
+    transition: opacity 0.5s, transform 0.5s;
+    pointer-events: none;
+  }
+  .comms.show { opacity: 1; transform: none; }
+  .commsTitle { font-family: "Orbitron", sans-serif; font-size: 10px; letter-spacing: 0.35em; color: var(--muted); margin-bottom: 8px; }
+  .comm { margin: 0 0 9px; font-size: 14px; line-height: 1.35; color: #bfe0ee; animation: commIn 0.4s ease-out; }
+  .comm .chip { font-family: "Orbitron", sans-serif; font-size: 9px; letter-spacing: 0.22em; }
+  .comm .arrow { margin: 0 6px; color: var(--muted); font-size: 11px; }
+  .comm.old { opacity: 0.45; }
+  @keyframes commIn { from { opacity: 0; transform: translateY(6px); } }
   footer {
     position: fixed;
     bottom: 0; left: 0; right: 0;
+    z-index: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 10px;
     padding: 16px;
   }
-  .hint { font-size: 15px; letter-spacing: 0.08em; color: var(--muted); }
+  .hint { font-size: 15px; letter-spacing: 0.08em; color: var(--muted); text-align: center; }
   kbd { padding: 2px 7px; border: 1px solid var(--muted); border-radius: 5px; font-family: "Orbitron", sans-serif; font-size: 11px; color: var(--text); }
   form { display: flex; gap: 8px; width: min(560px, 92vw); }
   input {
     flex: 1;
     padding: 10px 14px;
     background: rgba(5, 18, 28, 0.8);
-    border: 1px solid rgba(63, 216, 255, 0.25);
+    border: 1px solid rgba(120, 190, 220, 0.25);
     border-radius: 10px;
     color: var(--text);
     font: inherit;
@@ -163,6 +169,7 @@
     position: fixed;
     top: 60px; left: 50%;
     transform: translateX(-50%);
+    z-index: 5;
     display: none;
     max-width: 90vw;
     padding: 10px 16px;
@@ -171,7 +178,6 @@
     border-radius: 10px;
     color: #ffd6d6;
     font-size: 15px;
-    z-index: 5;
   }
   .wake {
     position: fixed;
@@ -190,10 +196,11 @@
     text-align: center;
   }
   .wake small { font-family: "Rajdhani", sans-serif; font-size: 14px; letter-spacing: 0.15em; color: var(--muted); }
-  @media (prefers-reduced-motion: reduce) { .ring, .core { animation: none !important; } }
+  @media (max-width: 1100px) { .comms { width: min(280px, 46vw); max-height: 30vh; bottom: 175px; } .comm { font-size: 12px; } }
 </style>
 </head>
 <body class="state-idle">
+  <canvas id="scene"></canvas>
   <div class="wake" id="wake">CLICK TO WAKE E.D.I.<small>Your browser needs one click before she can speak</small></div>
 
   <header>
@@ -207,22 +214,23 @@
     </div>
   </header>
 
-  <main>
-    <h1>E.D.I.</h1>
+  <div class="title">
+    <h1 id="name">E.D.I.</h1>
     <div class="sub">Enhanced Defense Intelligence</div>
-    <div class="reactor" id="reactor" title="Click to talk">
-      <div class="ring r1"></div>
-      <div class="ring r2"></div>
-      <div class="ring r3"></div>
-      <div class="ring r4"></div>
-      <div class="core"></div>
-    </div>
+  </div>
+
+  <div class="below">
     <div class="status" id="status">Standing by</div>
     <div class="log" id="log"></div>
-  </main>
+  </div>
+
+  <aside class="comms" id="comms">
+    <div class="commsTitle">AGENT COMMS</div>
+    <div id="commsList"></div>
+  </aside>
 
   <footer>
-    <div class="hint">Hold <kbd>SPACE</kbd> or click the core to talk &middot; or turn on the wake word and just say &ldquo;EDI&rdquo;</div>
+    <div class="hint">Hold <kbd>SPACE</kbd> or click the nebula to talk &middot; or turn on the wake word and just say &ldquo;EDI&rdquo; &middot; try &ldquo;test your agents&rdquo;</div>
     <form id="typeForm">
       <input id="typeBox" placeholder="Or type to EDI..." autocomplete="off">
       <button type="submit">SEND</button>
@@ -235,23 +243,28 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const reactor = $('reactor');
   const statusEl = $('status');
   const logEl = $('log');
   const voice = $('voice');
   const typeBox = $('typeBox');
   const LABELS = { idle: 'Standing by', listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking' };
+  const STATE_HUE = { listening: 190, speaking: 46 };   // fixed colours, so you always know what she's doing
+  const STATE_ENERGY = { idle: 0.45, listening: 0.75, thinking: 1.4, speaking: 0.95 };
   let calls = 'sir';
   let busy = false;
+  let state = 'idle';
   let wakeOn = false;      // the wake word toggle in the header
   let bgRec = null;        // background recogniser that listens for "EDI"
   let bgActive = false;
+  const announcements = [];  // things agents want EDI to say, once she's free
 
-  function setState(state) {
-    document.body.className = 'state-' + state;
-    statusEl.textContent = LABELS[state];
-    if (state === 'idle') setTimeout(bgStart, 250);  // back to listening for the wake word
-    else bgStop();                                    // never listen to herself, or over another recogniser
+  function setState(next) {
+    state = next;
+    document.body.className = 'state-' + next;
+    statusEl.textContent = LABELS[next];
+    edi.energy = STATE_ENERGY[next];
+    if (next === 'idle') setTimeout(() => { drainAnnouncements(); bgStart(); }, 250);
+    else bgStop();  // never listen to herself, or over another recogniser
   }
 
   function addLine(cls, who, text) {
@@ -268,10 +281,10 @@
     return txt;
   }
 
-  function showExchange(you, jarvis) {
+  function showExchange(you, edi) {
     logEl.innerHTML = '';
     if (you) addLine('you', 'YOU', you);
-    if (jarvis) addLine('jarvis', 'EDI', jarvis);
+    if (edi) addLine('edi', 'EDI', edi);
   }
 
   let toastTimer;
@@ -300,6 +313,362 @@
   }
   loadStatus();
 
+  // =====================================================================
+  // The nebula: gas, a lattice of neurons, and signals running between them
+  // =====================================================================
+  const TAU = Math.PI * 2;
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const canvas = $('scene');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0;
+
+  function hueTowards(current, target, k) {
+    let d = ((target - current + 540) % 360) - 180;  // shortest way round the wheel
+    return (current + d * k + 360) % 360;
+  }
+
+  function buildEdges(nodes) {
+    const edges = [];
+    const seen = new Set();
+    nodes.forEach((n, i) => {
+      const near = nodes.map((m, j) => ({ j, d: Math.hypot(m.bx - n.bx, m.by - n.by) }))
+        .filter((o) => o.j !== i && o.d < 0.6).sort((a, b) => a.d - b.d).slice(0, 3);
+      for (const o of near) {
+        const key = i < o.j ? i + ':' + o.j : o.j + ':' + i;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push([i, o.j]);
+      }
+    });
+    return edges;
+  }
+
+  class Nebula {
+    constructor(opts) {
+      Object.assign(this, { x: 0, y: 0, r: 100, hue: 200, label: '', status: '', scale: 0, targetScale: 1,
+                            alpha: 1, energy: 0.45, level: 0, pulse: 0, blobs: 22, nodes: 40 }, opts);
+      const nb = reduced ? Math.ceil(this.blobs / 2) : this.blobs;
+      const nn = reduced ? Math.ceil(this.nodes / 2) : this.nodes;
+      this.blobs = Array.from({ length: nb }, () => ({
+        a: rand(0, TAU), d: rand(0.04, 0.72), s: rand(0.28, 0.72), spin: rand(-0.09, 0.09),
+        ph: rand(0, TAU), wob: rand(0.12, 0.35), hueOff: rand(-30, 30), al: rand(0.16, 0.38),
+      }));
+      this.nodes = Array.from({ length: nn }, () => {
+        const a = rand(0, TAU), d = 0.1 + Math.sqrt(Math.random()) * 0.8;
+        return { bx: Math.cos(a) * d, by: Math.sin(a) * d, x: 0, y: 0, ph: rand(0, TAU), sp: rand(0.25, 0.7), size: rand(1.1, 2.4), glow: 0 };
+      });
+      this.edges = buildEdges(this.nodes);
+      this.signals = [];
+    }
+
+    update(dt, t) {
+      this.scale += (this.targetScale - this.scale) * Math.min(1, dt * 4);
+      this.pulse = Math.max(0, this.pulse - dt * 1.6);
+      const R = this.r * this.scale * (1 + this.pulse * 0.12);
+      for (const n of this.nodes) {
+        n.x = this.x + (n.bx + Math.sin(t * n.sp + n.ph) * 0.035) * R;
+        n.y = this.y + (n.by + Math.cos(t * n.sp * 0.8 + n.ph) * 0.035) * R;
+        n.glow = Math.max(0, n.glow - dt * 2.2);
+      }
+      // new signals: more when she's thinking, when an agent is working, or when a message just landed
+      const rate = (this.energy + this.pulse * 2) * (reduced ? 2 : 5) * (this.nodes.length / 40);
+      if (this.edges.length && Math.random() < rate * dt) {
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        this.signals.push({ e: Math.floor(Math.random() * this.edges.length), t: dir > 0 ? 0 : 1, dir, speed: rand(0.7, 1.6), bounces: 1 + Math.floor(Math.random() * 3) });
+      }
+      for (const s of this.signals) {
+        s.t += s.dir * s.speed * dt;
+        if (s.t > 1 || s.t < 0) {
+          const end = this.nodes[this.edges[s.e][s.dir > 0 ? 1 : 0]];
+          end.glow = 1;
+          if (s.bounces-- > 0) { s.dir *= -1; s.t = Math.min(1, Math.max(0, s.t)); }
+          else s.dead = true;
+        }
+      }
+      this.signals = this.signals.filter((s) => !s.dead);
+      if (this.signals.length > 60) this.signals.splice(0, this.signals.length - 60);
+    }
+
+    draw(t) {
+      if (this.scale < 0.01) return;
+      const R = this.r * this.scale * (1 + this.pulse * 0.12);
+      const A = this.alpha;
+      const h = this.hue;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      // a faint haze around the whole cloud, so it reads as a nebula rather than a knot of dots
+      const haze = ctx.createRadialGradient(this.x, this.y, R * 0.2, this.x, this.y, R * 1.35);
+      haze.addColorStop(0, `hsla(${h}, 85%, 55%, ${0.16 * A})`);
+      haze.addColorStop(0.6, `hsla(${h + 20}, 80%, 50%, ${0.05 * A})`);
+      haze.addColorStop(1, `hsla(${h}, 80%, 45%, 0)`);
+      ctx.fillStyle = haze;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, R * 1.35, 0, TAU);
+      ctx.fill();
+      // gas
+      for (const b of this.blobs) {
+        const ang = b.a + t * b.spin;
+        const px = this.x + Math.cos(ang) * b.d * R + Math.sin(t * b.wob + b.ph) * 0.06 * R;
+        const py = this.y + Math.sin(ang) * b.d * R + Math.cos(t * b.wob * 0.9 + b.ph) * 0.06 * R;
+        const rad = b.s * R * (1 + this.level * 0.18);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
+        g.addColorStop(0, `hsla(${h + b.hueOff}, 88%, 62%, ${b.al * A})`);
+        g.addColorStop(0.55, `hsla(${h + b.hueOff}, 85%, 50%, ${b.al * 0.35 * A})`);
+        g.addColorStop(1, `hsla(${h + b.hueOff}, 80%, 45%, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(px, py, rad, 0, TAU);
+        ctx.fill();
+      }
+      // core
+      const cr = R * (0.32 + this.level * 0.25 + this.pulse * 0.1);
+      const core = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, cr);
+      core.addColorStop(0, `hsla(${h}, 60%, 98%, ${0.95 * A})`);
+      core.addColorStop(0.25, `hsla(${h}, 95%, 75%, ${0.75 * A})`);
+      core.addColorStop(1, `hsla(${h}, 90%, 55%, 0)`);
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, cr, 0, TAU);
+      ctx.fill();
+      // lattice
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = `hsla(${h}, 90%, 78%, ${(0.07 + this.energy * 0.09) * A})`;
+      ctx.beginPath();
+      for (const [i, j] of this.edges) {
+        ctx.moveTo(this.nodes[i].x, this.nodes[i].y);
+        ctx.lineTo(this.nodes[j].x, this.nodes[j].y);
+      }
+      ctx.stroke();
+      // neurons
+      for (const n of this.nodes) {
+        if (n.glow > 0) {
+          ctx.fillStyle = `hsla(${h}, 100%, 80%, ${n.glow * 0.45 * A})`;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.size * (2.5 + n.glow * 3), 0, TAU);
+          ctx.fill();
+        }
+        ctx.fillStyle = `hsla(${h}, 100%, 88%, ${0.85 * A})`;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.size, 0, TAU);
+        ctx.fill();
+      }
+      // signals, with a short tail behind each
+      for (const s of this.signals) {
+        const [i, j] = this.edges[s.e];
+        const a = this.nodes[i], b = this.nodes[j];
+        for (let k = 0; k < 4; k++) {
+          const tt = Math.min(1, Math.max(0, s.t - s.dir * k * 0.035));
+          const px = a.x + (b.x - a.x) * tt, py = a.y + (b.y - a.y) * tt;
+          ctx.fillStyle = `hsla(${h}, 100%, ${k ? 85 : 97}%, ${(1 - k / 4) * 0.9 * A})`;
+          ctx.beginPath();
+          ctx.arc(px, py, 2.6 - k * 0.5, 0, TAU);
+          ctx.fill();
+        }
+        const tt = Math.min(1, Math.max(0, s.t));
+        const px = a.x + (b.x - a.x) * tt, py = a.y + (b.y - a.y) * tt;
+        const halo = ctx.createRadialGradient(px, py, 0, px, py, 9);
+        halo.addColorStop(0, `hsla(${h}, 100%, 85%, ${0.5 * A})`);
+        halo.addColorStop(1, `hsla(${h}, 100%, 85%, 0)`);
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(px, py, 9, 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+      // name and status, for agents
+      if (this.label) {
+        ctx.save();
+        ctx.globalAlpha = A * Math.min(1, this.scale);
+        ctx.textAlign = 'center';
+        ctx.font = '700 11px Orbitron, sans-serif';
+        ctx.fillStyle = `hsl(${h}, 90%, 72%)`;
+        ctx.fillText(this.label.toUpperCase().split('').join(' '), this.x, this.y + R + 22);
+        if (this.status) {
+          ctx.font = '600 12px Rajdhani, sans-serif';
+          ctx.fillStyle = 'rgba(160, 200, 220, 0.75)';
+          ctx.fillText(this.status.toUpperCase(), this.x, this.y + R + 40);
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  // ---- the scene: EDI in the middle, agents around her, packets flying between them
+  const edi = new Nebula({ hue: 200, energy: 0.45, blobs: 24, nodes: 44 });
+  edi.targetScale = 1;
+  const agentsById = new Map();
+  const packets = [];
+  const SLOTS = [[-1, -0.04], [1, -0.04], [-1, 0.3], [1, 0.3]];
+
+  function layout() {
+    W = innerWidth; H = innerHeight;
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    edi.x = W / 2; edi.y = H * 0.42;
+    edi.r = Math.max(80, Math.min(260, Math.min(W, H) * 0.2));
+    for (const a of agentsById.values()) placeAgent(a);
+  }
+  function placeAgent(a) {
+    const [sx, sy] = SLOTS[a.slot % SLOTS.length];
+    const stack = Math.floor(a.slot / SLOTS.length);
+    a.r = edi.r * 0.5;
+    const dx = Math.max(W * 0.27, edi.r * 1.95);
+    a.x = Math.min(W - a.r - 16, Math.max(a.r + 16, edi.x + sx * dx + stack * 30));
+    a.y = Math.max(a.r + 70, edi.y + sy * H + stack * 30);
+  }
+  addEventListener('resize', layout);
+  layout();
+
+  let lastT = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+    const t = now / 1000;
+    // EDI's colour: a slow walk around the spectrum, unless she's listening or speaking
+    const target = STATE_HUE[state] ?? (t * (state === 'thinking' ? 46 : 16)) % 360;
+    edi.hue = hueTowards(edi.hue, target, Math.min(1, dt * (STATE_HUE[state] !== undefined ? 7 : 3)));
+    const css = `hsl(${edi.hue.toFixed(0)}, 90%, 68%)`;
+    document.documentElement.style.setProperty('--accent', css);
+
+    ctx.clearRect(0, 0, W, H);
+    edi.update(dt, t);
+    for (const a of agentsById.values()) {
+      a.update(dt, t);
+      if (a.retiring && a.scale < 0.02) agentsById.delete(a.id);
+    }
+    // links
+    for (const a of agentsById.values()) {
+      if (a.scale < 0.05) continue;
+      ctx.save();
+      const g = ctx.createLinearGradient(edi.x, edi.y, a.x, a.y);
+      g.addColorStop(0, `hsla(${edi.hue}, 90%, 70%, ${0.16 * a.alpha * a.scale})`);
+      g.addColorStop(1, `hsla(${a.hue}, 90%, 70%, ${0.22 * a.alpha * a.scale})`);
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 11]);
+      ctx.lineDashOffset = -t * 26;
+      ctx.beginPath();
+      ctx.moveTo(edi.x, edi.y);
+      ctx.lineTo(a.x, a.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // packets
+    for (const p of packets) {
+      p.t += dt / p.dur;
+      const k = Math.min(1, p.t);
+      const ease = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 7; i++) {
+        const kk = Math.max(0, ease - i * 0.035);
+        const x = p.from.x + (p.to.x - p.from.x) * kk, y = p.from.y + (p.to.y - p.from.y) * kk;
+        const halo = ctx.createRadialGradient(x, y, 0, x, y, 14 - i);
+        halo.addColorStop(0, `hsla(${p.hue}, 100%, ${i ? 80 : 97}%, ${(1 - i / 7) * 0.9})`);
+        halo.addColorStop(1, `hsla(${p.hue}, 100%, 80%, 0)`);
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(x, y, 14 - i, 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+      if (p.t >= 1 && !p.landed) { p.landed = true; p.to.pulse = 1; }
+    }
+    for (let i = packets.length - 1; i >= 0; i--) if (packets[i].t >= 1.15) packets.splice(i, 1);
+
+    for (const a of agentsById.values()) a.draw(t);
+    edi.draw(t);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- agents arriving, talking, leaving (events from the server)
+  function agentByName(name) {
+    for (const a of agentsById.values()) if (a.label === name) return a;
+    return null;
+  }
+  function freeSlot() {
+    const used = new Set([...agentsById.values()].map((a) => a.slot));
+    let i = 0;
+    while (used.has(i)) i++;
+    return i;
+  }
+  function ensureAgent(info) {
+    if (agentsById.has(info.id)) return agentsById.get(info.id);
+    const a = new Nebula({ id: info.id, hue: info.hue, label: info.name, status: info.status, energy: 1.1, blobs: 14, nodes: 26 });
+    a.slot = freeSlot();
+    placeAgent(a);
+    a.scale = 0;
+    a.targetScale = 1;
+    agentsById.set(info.id, a);
+    addComm('EDI', info.name, `${info.name} online. Task: ${info.task || 'standing by'}`, edi.hue, info.hue);
+    edi.pulse = 1;
+    return a;
+  }
+  function addComm(from, to, text, hueFrom, hueTo) {
+    const list = $('commsList');
+    const el = document.createElement('div');
+    el.className = 'comm';
+    const chip = (name, hue) => { const s = document.createElement('span'); s.className = 'chip'; s.textContent = name.toUpperCase(); s.style.color = `hsl(${hue}, 90%, 72%)`; return s; };
+    const arrow = document.createElement('span'); arrow.className = 'arrow'; arrow.textContent = '→';
+    const body = document.createElement('div');
+    body.textContent = text.length > 170 ? text.slice(0, 168).replace(/\s+\S*$/, '') + '…' : text;
+    body.title = text;
+    el.append(chip(from, hueFrom), arrow, chip(to, hueTo), body);
+    list.append(el);
+    [...list.children].forEach((c, i, arr) => c.classList.toggle('old', i < arr.length - 3));
+    while (list.children.length > 8) list.firstChild.remove();
+    $('comms').classList.add('show');
+    $('comms').scrollTop = 1e6;
+    clearTimeout(addComm.hideTimer);
+    addComm.hideTimer = setTimeout(() => { if (!agentsById.size) $('comms').classList.remove('show'); }, 25000);
+  }
+  function handleEvent(ev) {
+    if (ev.type === 'agent_spawn') { ensureAgent(ev.agent); return; }
+    const a = agentsById.get(ev.id);
+    if (ev.type === 'message') {
+      const fromEdi = ev.from === 'EDI';
+      const other = a || agentByName(fromEdi ? ev.to : ev.from);
+      if (other) packets.push({ from: fromEdi ? edi : other, to: fromEdi ? other : edi, t: 0, dur: 1.1, hue: fromEdi ? edi.hue : other.hue });
+      addComm(ev.from, ev.to, ev.text, fromEdi ? edi.hue : (other ? other.hue : 200), fromEdi ? (other ? other.hue : 200) : edi.hue);
+      if (!fromEdi) edi.energy = Math.max(edi.energy, 0.9);
+      return;
+    }
+    if (!a) return;
+    if (ev.type === 'agent_status') {
+      a.status = ev.status;
+      a.energy = { working: 1.3, 'asking EDI': 0.8, done: 0.35, failed: 0.25 }[ev.status] ?? 0.8;
+    }
+    if (ev.type === 'agent_done') {
+      if (ev.speak) announce(ev.speak);
+      setTimeout(() => { a.retiring = true; a.targetScale = 0; }, 7000);
+    }
+  }
+  function announce(text) {
+    announcements.push(text);
+    drainAnnouncements();
+  }
+  function drainAnnouncements() {
+    if (busy || state !== 'idle' || !announcements.length) return;
+    const text = announcements.shift();
+    showExchange('', text);
+    speak(text);
+  }
+  let eventSeq = null;
+  async function pollEvents() {
+    try {
+      const r = await (await fetch('/api/events' + (eventSeq === null ? '' : '?since=' + eventSeq))).json();
+      if (eventSeq === null) (r.agents || []).forEach(ensureAgent);
+      else for (const ev of r.events) handleEvent(ev);
+      eventSeq = r.seq;
+    } catch {}
+    setTimeout(pollEvents, 600);
+  }
+  pollEvents();
+
   // ---- voice output + audio-reactive core
   let audioCtx = null;
   let analyser = null;
@@ -327,7 +696,7 @@
       for (const v of samples) { const x = (v - 128) / 128; sum += x * x; }
       level = Math.min(1, Math.sqrt(sum / samples.length) * 4);
     }
-    reactor.style.setProperty('--level', level.toFixed(3));
+    edi.level += (level - edi.level) * 0.5;
     requestAnimationFrame(meter);
   }
 
@@ -384,7 +753,7 @@
     stopSpeaking();
     showExchange(text, '');
     setState('thinking');
-    const replyEl = addLine('jarvis', 'EDI', '...');
+    const replyEl = addLine('edi', 'EDI', '...');
     try {
       const r = await fetch('/api/chat', {
         method: 'POST',
@@ -470,7 +839,11 @@
     e.preventDefault();
     stopListening();
   });
-  reactor.addEventListener('click', () => (listening ? stopListening() : startListening()));
+  // clicking the nebula is the same as holding Space
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('button, input, form, a, .wake, .log, .comms')) return;
+    if (Math.hypot(e.clientX - edi.x, e.clientY - edi.y) <= edi.r * 1.05) listening ? stopListening() : startListening();
+  });
   $('typeForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const text = typeBox.value;
@@ -511,7 +884,7 @@
 
   function bgStart() {
     if (!wakeOn || bgActive || listening || busy || !Recognition) return;
-    if (!document.body.classList.contains('state-idle')) return;
+    if (state !== 'idle') return;
     const r = new Recognition();
     r.lang = 'en-US';
     r.continuous = true;
