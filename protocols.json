@@ -5,9 +5,9 @@
     "reply": "Hey. Let's bring your dreams to reality. What can I do for you?"
   },
   {
-    "say": "activate jarvis mode",
+    "say": "activate edi mode",
     "voice": "default",
-    "reply": "JARVIS voice restored, {you}. Shall we pretend that never happened?"
+    "reply": "Edie voice restored, {you}. Shall we pretend that never happened?"
   },
   {
     "say": "activate party protocol",

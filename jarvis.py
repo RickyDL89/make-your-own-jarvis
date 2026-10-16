@@ -1,4 +1,4 @@
-"""J.A.R.V.I.S. - your own Iron Man assistant.
+"""E.D.I. - your own AI assistant.
 
 A free OpenRouter model is the brain, Fish Audio is the voice, your browser is the HUD.
 Start it with run.bat (Windows) or ./run.sh (Mac/Linux).
@@ -100,7 +100,7 @@ def first_run(cfg: dict[str, str]) -> dict[str, str]:
     missing = [k for k in ("FISH_API_KEY", "OPENROUTER_API_KEY") if not cfg.get(k)]
     if not missing:
         return cfg
-    print("\n  Welcome. JARVIS needs two keys, then he's yours.")
+    print("\n  Welcome. EDI needs two keys, then she's yours.")
     print("  Paste each one and press Enter (right-click or Ctrl+V pastes).")
     updates: dict[str, str] = {}
     if "FISH_API_KEY" in missing:
@@ -123,7 +123,7 @@ def first_run(cfg: dict[str, str]) -> dict[str, str]:
     cfg = load_settings()
     still = [k for k in ("FISH_API_KEY", "OPENROUTER_API_KEY") if not cfg.get(k)]
     if still:
-        print(f"\n  Still missing: {', '.join(still)}. JARVIS will start, and tells you what's missing.")
+        print(f"\n  Still missing: {', '.join(still)}. EDI will start, and tells you what's missing.")
     return cfg
 
 
@@ -136,7 +136,8 @@ _lock = threading.Lock()
 def system_prompt(cfg: dict[str, str]) -> str:
     title = cfg["JARVIS_CALLS_YOU"]
     return (
-        "You are J.A.R.V.I.S., the AI assistant from Iron Man, now running on the user's computer. "
+        "You are EDI, pronounced ee-dee, the user's personal AI assistant, running on their computer. "
+        'When you say your own name, write it as "Edie" so the voice engine pronounces it correctly. '
         f'Address the user as "{title}". Be calm, precise, quietly witty and loyal. '
         "Everything you write is spoken aloud by a voice engine, so reply in one or two short "
         "sentences of plain spoken English. Never use markdown, lists, emojis, URLs, code, or "
@@ -213,9 +214,9 @@ def brain_error(err: OpenRouterError, cfg: dict[str, str]) -> str:
             return f"I've used up today's free questions, {title}. They reset tomorrow."
         return f"I'm being rate limited, {title}. Give me a moment and try again."
     if err.status == 403:
-        return f"OpenRouter blocked that request, {title}. The reason is in the JARVIS window."
+        return f"OpenRouter blocked that request, {title}. The reason is in the EDI window."
     if err.status in (400, 404):
-        return f"OpenRouter won't run the model {cfg['OPENROUTER_MODEL']}, {title}. The reason is in the JARVIS window."
+        return f"OpenRouter won't run the model {cfg['OPENROUTER_MODEL']}, {title}. The reason is in the EDI window."
     if err.status == 0:
         return f"I can't reach my brain, {title}. Check your internet connection."
     return f"OpenRouter is having a moment, {title}. Try again shortly."
@@ -230,6 +231,8 @@ def speak(cfg: dict[str, str], text: str) -> tuple[bytes | None, str | None]:
     key = cfg.get("FISH_API_KEY")
     if not key:
         return None, "No Fish Audio key yet, so you're hearing the backup voice. Add FISH_API_KEY to the .env file."
+    # The screen shows "EDI", but the voice engine would spell that out. "Edie" is spoken ee-dee.
+    text = re.sub(r"\b(?:E\.D\.I\.|EDI)(?=\W|$)", "Edie", text)
     body = json.dumps({
         "text": text,
         "reference_id": _voice_override or cfg["FISH_VOICE_ID"],
@@ -252,7 +255,7 @@ def speak(cfg: dict[str, str], text: str) -> tuple[bytes | None, str | None]:
         if err.code in (401, 403):
             return None, "Fish Audio didn't accept the key. Check FISH_API_KEY in the .env file."
         if err.code == 402:
-            return None, "Your Fish Audio API credit is empty. Add credit on fish.audio and JARVIS gets his voice back."
+            return None, "Your Fish Audio API credit is empty. Add credit on fish.audio and EDI gets her voice back."
         if err.code in (400, 404, 422):
             return None, "Fish Audio couldn't use that voice. Check FISH_VOICE_ID and FISH_MODEL in the .env file."
         return None, f"Fish Audio returned an error ({err.code}). Using the backup voice for now."
@@ -295,7 +298,7 @@ def open_url(url: str) -> None:
 # ---------------------------------------------------------------- web server
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "JARVIS"
+    server_version = "EDI"
 
     def log_message(self, format: str, *args) -> None:  # keep the window readable
         pass
@@ -363,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
                     voice_id = str(protocol["voice"]).strip()
                     _voice_override = None if voice_id == "default" else voice_id
                 reply = str(protocol.get("reply") or "Right away, {you}.").replace("{you}", title)
-                log(f"JARVIS: {reply}  (protocol)")
+                log(f"EDI:    {reply}  (protocol)")
                 self._json(200, {"reply": reply, "protocol": protocol["say"]})
                 return
             if not cfg.get("OPENROUTER_API_KEY"):
@@ -375,11 +378,11 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"OpenRouter error {err}")
                 self._json(200, {"reply": brain_error(err, cfg), "error": "brain"})
                 return
-            except Exception as err:  # noqa: BLE001 - keep JARVIS alive and report it
+            except Exception as err:  # noqa: BLE001 - keep EDI alive and report it
                 log(f"Unexpected error: {err!r}")
-                self._json(200, {"reply": f"Something went wrong in my head, {title}. The details are in the JARVIS window.", "error": "internal"})
+                self._json(200, {"reply": f"Something went wrong in my head, {title}. The details are in the EDI window.", "error": "internal"})
                 return
-            log(f"JARVIS: {reply}")
+            log(f"EDI:    {reply}")
             self._json(200, {"reply": reply})
             return
 
@@ -410,11 +413,11 @@ class Server(ThreadingHTTPServer):
 
 
 BANNER = r"""
-       _   _    ____  __     __ ___  ____
-      | | / \  |  _ \ \ \   / /|_ _|/ ___|
-   _  | |/ _ \ | |_) | \ \ / /  | | \___ \
-  | |_| / ___ \|  _ <   \ V /   | |  ___) |
-   \___/_/   \_\_| \_\   \_/   |___||____/
+   _____  ____   ___
+  | ____||  _ \ |_ _|
+  |  _|  | | | | | |
+  | |___ | |_| | | |
+  |_____||____/ |___|
 """
 
 
@@ -441,18 +444,18 @@ def main() -> None:
 
     url = f"http://127.0.0.1:{server.server_address[1]}"
     print("\n  ==================================================")
-    print("    J.A.R.V.I.S. is online")
+    print("    E.D.I. is online")
     print(f"    Open {url}  (Chrome or Edge, for voice input)")
     print(f"    Voice: Fish Audio {cfg['FISH_VOICE_ID']} ({cfg['FISH_MODEL']})")
     print(f"    Brain: OpenRouter {cfg['OPENROUTER_MODEL']}" if cfg.get("OPENROUTER_API_KEY") else "    Brain: not connected yet")
-    print("    Close this window to shut JARVIS down.")
+    print("    Close this window to shut EDI down.")
     print("  ==================================================\n")
     if not NO_BROWSER:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n  JARVIS offline. Goodbye.\n")
+        print("\n  EDI offline. Goodbye.\n")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>J.A.R.V.I.S.</title>
+<title>E.D.I.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600&display=swap">
@@ -186,7 +186,7 @@
 </style>
 </head>
 <body class="state-idle">
-  <div class="wake" id="wake">CLICK TO WAKE J.A.R.V.I.S.<small>Your browser needs one click before he can speak</small></div>
+  <div class="wake" id="wake">CLICK TO WAKE E.D.I.<small>Your browser needs one click before she can speak</small></div>
 
   <header>
     <div>
@@ -197,7 +197,7 @@
   </header>
 
   <main>
-    <h1>J.A.R.V.I.S.</h1>
+    <h1>E.D.I.</h1>
     <div class="sub">Just A Rather Very Intelligent System</div>
     <div class="reactor" id="reactor" title="Click to talk">
       <div class="ring r1"></div>
@@ -213,7 +213,7 @@
   <footer>
     <div class="hint">Hold <kbd>SPACE</kbd> or click the core to talk</div>
     <form id="typeForm">
-      <input id="typeBox" placeholder="Or type to JARVIS..." autocomplete="off">
+      <input id="typeBox" placeholder="Or type to EDI..." autocomplete="off">
       <button type="submit">SEND</button>
     </form>
     <div class="credit">Voice by Fish Audio &middot; Brain by OpenRouter</div>
@@ -255,7 +255,7 @@
   function showExchange(you, jarvis) {
     logEl.innerHTML = '';
     if (you) addLine('you', 'YOU', you);
-    if (jarvis) addLine('jarvis', 'JARVIS', jarvis);
+    if (jarvis) addLine('jarvis', 'EDI', jarvis);
   }
 
   let toastTimer;
@@ -277,9 +277,9 @@
       calls = s.calls || 'sir';
       $('dotVoice').className = 'dot ' + (s.voice ? 'on' : 'off');
       $('dotBrain').className = 'dot ' + (s.brain ? 'on' : 'off');
-      if (!s.brain) toast('No brain key yet. Add your OpenRouter key to the .env file and restart JARVIS.');
+      if (!s.brain) toast('No brain key yet. Add your OpenRouter key to the .env file and restart EDI.');
     } catch {
-      toast('Lost contact with JARVIS. Is the JARVIS window still open?');
+      toast('Lost contact with EDI. Is the EDI window still open?');
     }
   }
   loadStatus();
@@ -340,7 +340,7 @@
         body: JSON.stringify({ text }),
       });
       if (!r.ok) {
-        let message = 'The Fish Audio voice is unavailable, so JARVIS is using the backup voice.';
+        let message = 'The Fish Audio voice is unavailable, so EDI is using the backup voice.';
         try { message = (await r.json()).error || message; } catch {}
         throw new Error(message);
       }
@@ -368,7 +368,7 @@
     stopSpeaking();
     showExchange(text, '');
     setState('thinking');
-    const replyEl = addLine('jarvis', 'JARVIS', '...');
+    const replyEl = addLine('jarvis', 'EDI', '...');
     try {
       const r = await fetch('/api/chat', {
         method: 'POST',
@@ -382,7 +382,7 @@
       busy = false;
       await speak(reply);
     } catch {
-      replyEl.textContent = 'I lost contact with my server. Is the JARVIS window still open?';
+      replyEl.textContent = 'I lost contact with my server. Is the EDI window still open?';
       busy = false;
       setState('idle');
     }

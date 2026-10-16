@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title J.A.R.V.I.S.
+title E.D.I.
 
 rem ---- find Python 3.10 or newer
 set "PY="
