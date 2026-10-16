@@ -812,7 +812,7 @@ void main() {
       a.energy = { working: 1.0, 'asking EDI': 0.6, done: 0.2, failed: 0.15 }[ev.status] ?? 0.6;
     }
     if (ev.type === 'agent_done') {
-      if (ev.speak) announce(ev.speak);
+      if (ev.speak) announce(ev.speak, ev.seq);
       setTimeout(() => { a.retiring = true; a.targetScale = 0; }, 7000);
     }
   }
@@ -835,15 +835,33 @@ void main() {
     }
   }
   setInterval(isSpeaker, 1000);
-  function announce(text) {
-    announcements.push(text);
+  async function announce(text, seq) {
+    // Ask the server who speaks this one. The first page to claim it does; every other open tab,
+    // browser or device only shows the text. The local lock is a fast first filter.
+    let speakIt = isSpeaker();
+    if (speakIt && seq !== undefined) {
+      try {
+        const r = await fetch('/api/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seq }) });
+        speakIt = (await r.json()).speak === true;
+      } catch {}
+    }
+    announcements.push({ text, speakIt });
     drainAnnouncements();
+  }
+  const recentlySaid = new Map();  // sentence -> time, so nothing is ever voiced twice in a row
+  function saidRecently(text) {
+    const now = Date.now();
+    for (const [k, t] of recentlySaid) if (now - t > 10000) recentlySaid.delete(k);
+    if (recentlySaid.has(text)) return true;
+    recentlySaid.set(text, now);
+    return false;
   }
   function drainAnnouncements() {
     if (busy || state !== 'idle' || !announcements.length) return;
-    const text = announcements.shift();
+    const { text, speakIt } = announcements.shift();
     showExchange('', text);
-    if (isSpeaker()) speak(text);
+    if (speakIt && !saidRecently(text)) speak(text);
+    else setTimeout(drainAnnouncements, 50);
   }
   let eventSeq = null;
   async function pollEvents() {
@@ -953,6 +971,7 @@ void main() {
       replyEl.textContent = reply;
       if (data.error) toast(reply);
       busy = false;
+      saidRecently(reply);
       await speak(reply);
     } catch {
       replyEl.textContent = 'I lost contact with my server. Is the EDI window still open?';

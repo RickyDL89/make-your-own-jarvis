@@ -524,6 +524,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(502, {"error": problem})
             return
 
+        if path == "/api/claim":
+            # One voice per agent report: the first HUD to claim an event's seq gets to speak it.
+            try:
+                seq = int(data.get("seq"))
+            except (TypeError, ValueError):
+                self._json(400, {"error": "seq?"})
+                return
+            self._json(200, {"speak": AGENTS.claim(seq)})
+            return
+
         if path == "/api/reset":
             with _lock:
                 _history.clear()

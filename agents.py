@@ -81,6 +81,18 @@ class Runtime:
         with self._lock:
             return [dict(a) for a in self.agents.values() if a["status"] != "gone"]
 
+    def claim(self, seq: int) -> bool:
+        """The first HUD to claim an announcement speaks it; every other open tab or browser only shows it."""
+        with self._lock:
+            if not hasattr(self, "_claimed"):
+                self._claimed: set[int] = set()
+            if seq in self._claimed:
+                return False
+            self._claimed.add(seq)
+            if len(self._claimed) > 1000:
+                self._claimed = set(sorted(self._claimed)[-500:])
+            return True
+
     # ---- what the user said
 
     def parse(self, text: str) -> dict | None:
