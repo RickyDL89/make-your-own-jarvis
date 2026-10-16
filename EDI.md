@@ -78,7 +78,9 @@ Guardrails:
   **"confirm"**; **"cancel"** drops them. A confirmed task also gets the tools it needs for that kind of work
   (`EDI_TASK_TOOLS_CONFIRMED`: PowerShell, rm/del/Remove-Item, move/rename, all of git, winget, taskkill), which
   an unconfirmed task never has.
-- `EDI_TASK_TIMEOUT` (600 seconds) cuts a runaway task off.
+- `EDI_TASK_TIMEOUT` (900 seconds) cuts a runaway task off. The Operator is told its budget and asked to
+  work in fast, partial steps so it always has something to report; if it still runs out, EDI says so and
+  suggests a narrower task (one folder instead of a whole drive, for example).
 - Everything is written to `tasks.log` next to her.
 
 ## Memory (survives restarts)

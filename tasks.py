@@ -51,9 +51,9 @@ def settings(cfg: dict[str, str], confirmed: bool = False) -> dict:
     if confirmed:
         tools += [t.strip() for t in (cfg.get("EDI_TASK_TOOLS_CONFIRMED") or CONFIRMED_TOOLS).split(",") if t.strip()]
     try:
-        timeout = int(cfg.get("EDI_TASK_TIMEOUT") or 600)
+        timeout = int(cfg.get("EDI_TASK_TIMEOUT") or 900)
     except ValueError:
-        timeout = 600
+        timeout = 900
     return {"dir": folder, "tools": tools, "timeout": timeout, "model": cfg.get("CLAUDE_AGENT_MODEL") or "claude-opus-5-5"}
 
 
@@ -100,12 +100,19 @@ def run(cfg: dict[str, str], task: str, on_step, confirmed: bool = False) -> dic
     s = settings(cfg, confirmed)
     folder = Path(s["dir"]).expanduser()
     folder.mkdir(parents=True, exist_ok=True)
+    minutes = max(1, s["timeout"] // 60)
     system = (
         "You are the Operator, the hands of EDI, a voice assistant on this computer. EDI has delegated a task "
         f"from the user to you. Work inside {folder} unless the task clearly names another place. Do the task "
         "carefully and completely, prefer reversible actions, and never ask questions: if something is ambiguous, "
-        "make a sensible choice and say which. When you are done, reply with a short plain-text report of what you "
-        "did and anything the user should know, in at most five sentences, no markdown."
+        "make a sensible choice and say which. "
+        f"You have {minutes} minutes in total and are cut off without warning after that, so prefer fast approaches: "
+        "never run one command that could take many minutes (for example du over a whole drive through Git Bash, "
+        "which is very slow on Windows); measure big things in parts, largest first, with a timeout on each command, "
+        "and keep partial results as you go so you always have something to report. On Windows, prefer "
+        "powershell -NoProfile -Command Get-ChildItem ... for sizes and listings over du. "
+        "When you are done, reply with a short plain-text report of what you did and anything the user should know, "
+        "in at most five sentences, no markdown."
     )
     cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", s["model"],
            "--allowedTools", *s["tools"], "--append-system-prompt", system, task]
