@@ -57,6 +57,30 @@ while she is speaking. The setting is remembered next time.
 Protocols in [protocols.json](protocols.json) can run local programs too, with a `"run"` list next to `"open"`:
 `"run": ["outlook.exe"]`.
 
+## Taking over: EDI does things on your computer
+
+- **"EDI, take over: rename the photos in my downloads folder by date."**
+- **"Take over: find every .log file older than a month under my repos and list them in a text file on the desktop."**
+- **"Do this: add a README to the project in D:\repos\myapp describing what it does."**
+
+The task goes to **Claude Code** with tools (Opus 5.5), running as the **Operator**, an orange nebula next to
+EDI. Every step it takes (reading a file, running a command, searching) flies to EDI and shows in the comms
+panel, and EDI tells you the result out loud when it is finished. Because it is Claude Code, your own Claude
+Code setup applies: MCP servers you have added (Desktop Commander, ClickUp, and so on) are available to it.
+
+Guardrails:
+
+- It works inside `EDI_TASK_DIR` (your home folder unless you change it) and Claude Code will not write outside it.
+- It may only use the tools in `EDI_TASK_TOOLS`: by default reading, searching, editing and writing files,
+  `git status/diff/log/add/commit`, `python`, `node`, `npm`, and web search. Anything else is refused and EDI
+  tells you what was blocked. Add rules like `Bash(docker:*)` to widen it.
+- Tasks that sound destructive (delete, remove, uninstall, format, wipe, kill...) are not started until you say
+  **"confirm"**; **"cancel"** drops them. A confirmed task also gets the tools it needs for that kind of work
+  (`EDI_TASK_TOOLS_CONFIRMED`: PowerShell, rm/del/Remove-Item, move/rename, all of git, winget, taskkill), which
+  an unconfirmed task never has.
+- `EDI_TASK_TIMEOUT` (600 seconds) cuts a runaway task off.
+- Everything is written to `tasks.log` next to her.
+
 ## Memory (survives restarts)
 
 - **"Remember that my car is a blue Golf"** → "Noted, sir."

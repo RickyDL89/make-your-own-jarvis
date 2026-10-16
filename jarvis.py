@@ -474,6 +474,12 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"EDI:    {reply}  (protocol)")
                 self._json(200, {"reply": reply, "protocol": protocol["say"]})
                 return
+            # Take-over: "EDI, take over: ..." hands the task to Claude Code with tools, shown as the Operator.
+            task_reply = AGENTS.handle_task_phrase(cfg, text, title, available=brain_kind(cfg) == "claude")
+            if task_reply:
+                log(f"EDI:    {task_reply}  (task)")
+                self._json(200, {"reply": task_reply, "skill": "task"})
+                return
             # Agents: "spawn a research agent to ..." puts a helper on the HUD that reports back later.
             wanted = AGENTS.parse(text)
             if wanted:

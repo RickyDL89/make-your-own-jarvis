@@ -14,6 +14,8 @@ import threading
 import time
 from collections import deque
 
+import tasks
+
 ROLES = {
     "research": ("Researcher", "You find facts and current information and report them accurately, with the key numbers and names."),
     "analyst": ("Analyst", "You weigh options and numbers and give a clear recommendation with the reason."),
@@ -30,7 +32,9 @@ ROLES = {
     "finance": ("Analyst", "You explain money questions plainly, with the numbers."),
     "travel": ("Navigator", "You plan routes and trips and flag what could go wrong."),
     "scout": ("Scout", "You look things up fast and report only what matters."),
+    "operator": ("Operator", "You carry out tasks on the user's computer with Claude Code."),
 }
+OPERATOR_HUE = 18  # the take-over agent is always the same orange, so it's recognisable
 HUES = [28, 135, 275, 330, 215, 60]  # each agent gets a fixed colour, in spawn order
 ROLE_WORDS = "|".join(sorted(ROLES, key=len, reverse=True))
 
@@ -143,6 +147,79 @@ class Runtime:
 
     def demo(self, cfg: dict) -> list[dict]:
         return [self.spawn(cfg, role, task, force_question=True) for role, task in DEMO_TASKS]
+
+    # ---- take-over tasks: Claude Code with tools, shown as the Operator
+
+    _pending_task: tuple[str, float] | None = None
+
+    def handle_task_phrase(self, cfg: dict, text: str, you: str, *, available: bool) -> str | None:
+        """'take over: ...', 'confirm', 'cancel'. Returns what EDI should say, or None if this isn't about a task."""
+        pending = self._pending_task if self._pending_task and time.time() - self._pending_task[1] < 120 else None
+        if tasks.CONFIRM_RE.match(text):
+            if not pending:
+                return None
+            self._pending_task = None
+            self.spawn_task(cfg, pending[0], confirmed=True)
+            return f"Confirmed, {you}. Taking over. I'll tell you when it's done."
+        if tasks.CANCEL_RE.match(text):
+            if not pending:
+                return None
+            self._pending_task = None
+            return f"Cancelled, {you}. Nothing was touched."
+        m = tasks.TAKEOVER_RE.match(text)
+        if not m:
+            return None
+        task = m.group(1).strip()
+        if len(task.split()) < 2:
+            return f"Take over what, {you}? Say: take over, and then the task."
+        if not available:
+            return f"Taking over needs Claude Code installed and signed in on this computer, {you}."
+        if tasks.DANGER_RE.search(task):
+            self._pending_task = (task, time.time())
+            return f"That sounds destructive, {you}: {task}. Say confirm to go ahead, or cancel."
+        self.spawn_task(cfg, task)
+        return f"Taking over, {you}. I'll tell you when it's done."
+
+    def spawn_task(self, cfg: dict, task: str, *, confirmed: bool = False) -> dict:
+        agent = self._new_agent("operator", task)
+        with self._lock:
+            agent["hue"] = OPERATOR_HUE
+        self.emit("agent_spawn", agent=dict(agent))
+        threading.Thread(target=self._run_task, args=(cfg, agent, confirmed), daemon=True, name=f"task-{agent['id']}").start()
+        return agent
+
+    def _run_task(self, cfg: dict, agent: dict, confirmed: bool = False) -> None:
+        name, task = agent["name"], agent["task"]
+        you = cfg["JARVIS_CALLS_YOU"]
+        try:
+            time.sleep(0.8)
+            self._say("EDI", name, f"{name}, take over: {task}", agent["id"])
+            self._status(agent, "working")
+            outcome = tasks.run(cfg, task, lambda step: self._say(name, "EDI", step, agent["id"]), confirmed=confirmed)
+            failed = bool(outcome["error"]) and not outcome["result"]
+            report = outcome["result"] or ("I couldn't finish: " + str(outcome["error"]) if failed else "Done.")
+            if outcome["denied"]:
+                blocked = "; ".join(dict.fromkeys(outcome["denied"]))
+                report += f" I wasn't allowed to: {blocked[:300]}."
+            self._say(name, "EDI", report[:900], agent["id"])
+            self._status(agent, "failed" if failed else "done")
+            summary = self._think(cfg, f"[Report from {name}] {report}",
+                                  context=(f"Your Operator (Claude Code) has just finished the task '{task}' that you handed over on the "
+                                           f"user's computer, in {outcome['steps']} steps and {outcome['seconds']:.0f} seconds. Tell the user "
+                                           "what was done in one to three spoken sentences, and mention anything that was blocked or went wrong."),
+                                  remember=True)
+            self.emit("agent_done", id=agent["id"], speak=summary)
+        except Exception as err:  # noqa: BLE001 - a task failing must never take EDI down
+            self._log(f"{name} failed: {err!r}")
+            self._say(name, "EDI", f"I ran into a problem and couldn't finish: {str(err)[:120]}", agent["id"])
+            self._status(agent, "failed")
+            self.emit("agent_done", id=agent["id"], speak=f"The operator couldn't finish, {you}. The reason is in the EDI window.")
+        finally:
+            def retire() -> None:
+                time.sleep(12)
+                with self._lock:
+                    agent["status"] = "gone"
+            threading.Thread(target=retire, daemon=True).start()
 
     def acknowledgement(self, agents: list[dict], you: str) -> str:
         names = " and ".join(a["name"].lower() if a["name"] != "Agent" else "an agent" for a in agents)
