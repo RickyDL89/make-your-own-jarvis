@@ -866,7 +866,7 @@ void main() {
   let eventSeq = null;
   async function pollEvents() {
     try {
-      const r = await (await fetch('/api/events' + (eventSeq === null ? '' : '?since=' + eventSeq))).json();
+      const r = await (await fetch('/api/events?v=3' + (eventSeq === null ? '' : '&since=' + eventSeq))).json();
       if (eventSeq === null) (r.agents || []).forEach(ensureAgent);
       else for (const ev of r.events) handleEvent(ev);
       eventSeq = r.seq;

@@ -46,6 +46,7 @@ DEFAULTS = {
 }
 
 NO_BROWSER = os.environ.get("JARVIS_NO_BROWSER") == "1"  # for testing: never open browser tabs
+HUD_VERSION = "3"  # bump when an old open tab must stop speaking for agents (see /api/events)
 
 
 def log(message: str) -> None:
@@ -432,8 +433,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 since = int(query.get("since", ""))
             except ValueError:
-                since = None
+                since = None  # first poll: the page only wants the current seq and the active agents
             events, seq = AGENTS.events_since(since) if since is not None else ([], AGENTS.events_since(0)[1])
+            if query.get("v") != HUD_VERSION:
+                # A page running an older HUD (a tab left open from before a restart) must not speak:
+                # it would talk over the current one. It still gets to draw the agents.
+                events = [{**e, "speak": ""} if e.get("type") == "agent_done" else e for e in events]
             self._json(200, {"seq": seq, "events": events, "agents": AGENTS.active()})
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
