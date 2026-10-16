@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import agents
+import brain
 import skills
 
 ROOT = Path(__file__).resolve().parent
@@ -34,7 +35,9 @@ OPENROUTER_KEYS_URL = "https://openrouter.ai/keys"
 DEFAULTS = {
     "FISH_VOICE_ID": "41f0953d7a6b4c078445c7e65d620eeb",  # "JARVIS" in the Fish Audio voice library
     "FISH_MODEL": "s2.1-pro-free",  # S2.1 Pro at $0, free on the Fish Audio API until Nov 30, 2026
-    "OPENROUTER_MODEL": "apodex/apodex-1.1-mini:free",  # the brain, free on OpenRouter
+    "OPENROUTER_MODEL": "apodex/apodex-1.1-mini:free",  # the OpenRouter brain, used when Claude Code isn't installed
+    "BRAIN": "",  # "claude" or "openrouter". Empty means: Claude Code if it's installed, else OpenRouter
+    "CLAUDE_MODEL": brain.DEFAULT_MODEL,  # the Claude Code brain. Haiku is quick, which matters when it's spoken
     "JARVIS_CALLS_YOU": "sir",
     "EDI_LOCATION": "",  # your city, for the weather. Empty means: work it out from the connection
     "BRAVE_API_KEY": "",  # optional, for real web search. Free at https://brave.com/search/api
@@ -100,9 +103,18 @@ def ask(prompt: str) -> str:
         return ""
 
 
+def brain_kind(cfg: dict[str, str]) -> str:
+    """Which brain to use: Claude Code when it's installed, otherwise OpenRouter. BRAIN in .env forces one."""
+    wanted = cfg.get("BRAIN", "").lower()
+    if wanted in ("claude", "openrouter"):
+        return wanted
+    return "claude" if brain.available() else "openrouter"
+
+
 def first_run(cfg: dict[str, str]) -> dict[str, str]:
     """Ask for any missing key in the console and save it to .env."""
-    missing = [k for k in ("FISH_API_KEY", "OPENROUTER_API_KEY") if not cfg.get(k)]
+    needed = ["FISH_API_KEY"] + (["OPENROUTER_API_KEY"] if brain_kind(cfg) == "openrouter" else [])
+    missing = [k for k in needed if not cfg.get(k)]
     if not missing:
         return cfg
     print("\n  Welcome. EDI needs two keys, then she's yours.")
@@ -126,7 +138,7 @@ def first_run(cfg: dict[str, str]) -> dict[str, str]:
         save_to_env(updates)
         print("\n  Saved to the .env file in this folder. You won't be asked again.")
     cfg = load_settings()
-    still = [k for k in ("FISH_API_KEY", "OPENROUTER_API_KEY") if not cfg.get(k)]
+    still = [k for k in needed if not cfg.get(k)]
     if still:
         print(f"\n  Still missing: {', '.join(still)}. EDI will start, and tells you what's missing.")
     return cfg
@@ -138,7 +150,8 @@ _history: list[dict] = skills.load_history()  # picks up where the last session 
 _lock = threading.Lock()
 
 
-def system_prompt(cfg: dict[str, str]) -> str:
+def persona(cfg: dict[str, str]) -> str:
+    """Who EDI is. The part of the system prompt that doesn't change from one message to the next."""
     title = cfg["JARVIS_CALLS_YOU"]
     return (
         "You are EDI, pronounced ee-dee, the user's personal AI assistant, running on their computer. "
@@ -147,10 +160,32 @@ def system_prompt(cfg: dict[str, str]) -> str:
         "Everything you write is spoken aloud by a voice engine, so reply in one or two short "
         "sentences of plain spoken English. Never use markdown, lists, emojis, URLs, code, or "
         "anything in square brackets or asterisks. "
+        "A message may start with a line in square brackets: that is context from your own systems "
+        "(the time, your notes, live data you fetched), not something the user said. Use it, never read it out. "
         + skills.ABILITIES
-        + skills.memory_prompt()
-        + f"The local date and time is {time.strftime('%A, %B %d, %Y, %I:%M %p')}."
     )
+
+
+def turn_context(cfg: dict[str, str], context: str | None = None) -> str:
+    """What changes every message: the time, the user's notes, live data a skill just fetched."""
+    parts = [f"The local date and time is {time.strftime('%A, %B %d, %Y, %I:%M %p')}.", skills.memory_prompt().strip()]
+    if context:
+        parts.append(context)
+    return " ".join(p for p in parts if p)
+
+
+def system_prompt(cfg: dict[str, str]) -> str:
+    return persona(cfg) + turn_context(cfg)
+
+
+_claude: brain.Session | None = None
+
+
+def claude_session(cfg: dict[str, str]) -> brain.Session:
+    global _claude
+    if _claude is None:
+        _claude = brain.Session(cfg["CLAUDE_MODEL"], persona(cfg), log)
+    return _claude
 
 
 class OpenRouterError(Exception):
@@ -185,6 +220,23 @@ def openrouter_post(cfg: dict[str, str], payload: dict) -> dict:
 
 def llm(cfg: dict[str, str], messages: list[dict], max_tokens: int = 4000) -> str:
     """One call to the brain with any messages. Agents use this with their own persona."""
+    if brain_kind(cfg) == "claude":
+        system = " ".join(m["content"] for m in messages if m["role"] == "system")
+        turns = [m for m in messages if m["role"] != "system"]
+        if len(turns) == 1:
+            prompt = turns[0]["content"]
+        else:  # a conversation, flattened: Claude sees who said what
+            prompt = "\n\n".join(("User: " if m["role"] == "user" else "Assistant: ") + m["content"] for m in turns) + "\n\nAssistant:"
+        try:
+            return brain.complete(cfg["CLAUDE_MODEL"], system, prompt)
+        except brain.BrainError:
+            if not cfg.get("OPENROUTER_API_KEY"):
+                raise
+            log("Brain: Claude failed, falling back to OpenRouter for this call")
+    return openrouter_llm(cfg, messages, max_tokens)
+
+
+def openrouter_llm(cfg: dict[str, str], messages: list[dict], max_tokens: int = 4000) -> str:
     payload = {
         "model": cfg["OPENROUTER_MODEL"],
         "messages": messages,
@@ -205,12 +257,24 @@ def llm(cfg: dict[str, str], messages: list[dict], max_tokens: int = 4000) -> st
 
 def think(cfg: dict[str, str], text: str, context: str | None = None, remember: bool = True) -> str:
     """Ask the brain as EDI. `context` is live data a skill just fetched (weather, search results, calendar)."""
-    with _lock:
-        messages = list(_history) + [{"role": "user", "content": text}]
-    system = [{"role": "system", "content": system_prompt(cfg)}]
-    if context:
-        system.append({"role": "system", "content": context})
-    reply = llm(cfg, [*system, *messages]) or f"I'm not sure what to say to that, {cfg['JARVIS_CALLS_YOU']}."
+    reply = ""
+    if brain_kind(cfg) == "claude" and remember:
+        # The persistent Claude session holds the conversation itself; each turn gets the time,
+        # the user's notes and any live data in a bracketed line the persona knows to treat as context.
+        try:
+            reply = claude_session(cfg).ask(f"[{turn_context(cfg, context)}]\n{text}")
+        except brain.BrainError as err:
+            if not cfg.get("OPENROUTER_API_KEY"):
+                raise
+            log(f"Brain: Claude failed ({str(err)[:80]}), falling back to OpenRouter")
+    if not reply:
+        with _lock:
+            messages = list(_history) + [{"role": "user", "content": text}]
+        system = [{"role": "system", "content": system_prompt(cfg)}]
+        if context:
+            system.append({"role": "system", "content": context})
+        reply = llm(cfg, [*system, *messages])
+    reply = reply or f"I'm not sure what to say to that, {cfg['JARVIS_CALLS_YOU']}."
     if remember:
         with _lock:
             _history.extend([{"role": "user", "content": text}, {"role": "assistant", "content": reply}])
@@ -352,10 +416,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, INDEX_HTML.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/status":
             cfg = load_settings()
+            kind = brain_kind(cfg)
             self._json(200, {
                 "voice": bool(cfg.get("FISH_API_KEY")),
-                "brain": bool(cfg.get("OPENROUTER_API_KEY")),
-                "model": cfg["OPENROUTER_MODEL"],
+                "brain": kind == "claude" or bool(cfg.get("OPENROUTER_API_KEY")),
+                "brainName": f"Claude {cfg['CLAUDE_MODEL'].split('-')[1]}" if kind == "claude" else "OpenRouter",
+                "model": cfg["CLAUDE_MODEL"] if kind == "claude" else cfg["OPENROUTER_MODEL"],
                 "calls": cfg["JARVIS_CALLS_YOU"],
                 "protocols": [p["say"] for p in load_protocols()],
             })
@@ -405,7 +471,7 @@ class Handler(BaseHTTPRequestHandler):
             # Agents: "spawn a research agent to ..." puts a helper on the HUD that reports back later.
             wanted = AGENTS.parse(text)
             if wanted:
-                if not cfg.get("OPENROUTER_API_KEY"):
+                if brain_kind(cfg) != "claude" and not cfg.get("OPENROUTER_API_KEY"):
                     self._json(200, {"reply": f"I can't spawn agents without a brain, {title}. Add OPENROUTER_API_KEY to the .env file.", "error": "brain"})
                     return
                 if not wanted.get("demo") and len(wanted["task"].split()) < 2:
@@ -425,14 +491,18 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"EDI:    {skill.reply}  ({skill.name})")
                 self._json(200, {"reply": skill.reply, "skill": skill.name})
                 return
-            if not cfg.get("OPENROUTER_API_KEY"):
-                self._json(200, {"reply": f"My brain isn't connected yet, {title}. Add OPENROUTER_API_KEY to the .env file and restart me.", "error": "brain"})
+            if brain_kind(cfg) != "claude" and not cfg.get("OPENROUTER_API_KEY"):
+                self._json(200, {"reply": f"My brain isn't connected yet, {title}. Install Claude Code, or add OPENROUTER_API_KEY to the .env file, and restart me.", "error": "brain"})
                 return
             try:
                 reply = think(cfg, text, skill.context if skill else None)
             except OpenRouterError as err:
                 log(f"OpenRouter error {err}")
                 self._json(200, {"reply": brain_error(err, cfg), "error": "brain"})
+                return
+            except brain.BrainError as err:
+                log(f"Claude error: {err}")
+                self._json(200, {"reply": f"My brain isn't answering, {title}. {err}", "error": "brain"})
                 return
             except Exception as err:  # noqa: BLE001 - keep EDI alive and report it
                 log(f"Unexpected error: {err!r}")
@@ -457,6 +527,8 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 _history.clear()
                 skills.save_history([])
+            if _claude:
+                _claude.forget()
             self._json(200, {"ok": True})
             return
 
@@ -504,10 +576,16 @@ def main() -> None:
     print("    E.D.I. is online")
     print(f"    Open {url}  (Chrome or Edge, for voice input)")
     print(f"    Voice: Fish Audio {cfg['FISH_VOICE_ID']} ({cfg['FISH_MODEL']})")
-    print(f"    Brain: OpenRouter {cfg['OPENROUTER_MODEL']}" if cfg.get("OPENROUTER_API_KEY") else "    Brain: not connected yet")
+    kind = brain_kind(cfg)
+    if kind == "claude":
+        print(f"    Brain: Claude Code {cfg['CLAUDE_MODEL']}" + (" (OpenRouter as fallback)" if cfg.get("OPENROUTER_API_KEY") else ""))
+    else:
+        print(f"    Brain: OpenRouter {cfg['OPENROUTER_MODEL']}" if cfg.get("OPENROUTER_API_KEY") else "    Brain: not connected yet")
     print("    Skills: open apps and files, memory, weather, web search, Outlook, agents")
     print("    Close this window to shut EDI down.")
     print("  ==================================================\n")
+    if kind == "claude":
+        threading.Thread(target=lambda: claude_session(cfg).warm(), daemon=True).start()  # so the first reply is quick
     if not NO_BROWSER:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:

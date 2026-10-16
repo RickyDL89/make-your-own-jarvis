@@ -485,38 +485,68 @@ void main() {
       this.nodes = Array.from({ length: nn }, (_, i) => {
         const onRing = i % 5 < 2;
         const a = rand(0, TAU), d = onRing ? 0.78 + gauss() * 0.05 : 0.12 + Math.sqrt(Math.random()) * 0.55;
-        return { bx: Math.cos(a) * d, by: Math.sin(a) * d * 0.86, x: 0, y: 0, ph: rand(0, TAU), sp: rand(0.2, 0.6), size: onRing ? rand(1, 1.8) : rand(1.1, 2.2), glow: 0 };
+        return { bx: Math.cos(a) * d, by: Math.sin(a) * d * 0.86, z: rand(-1, 1), x: 0, y: 0, ph: rand(0, TAU), sp: rand(0.15, 0.5),
+                 size: onRing ? rand(1, 1.7) : rand(1.3, 2.4), glow: 0, ring: 0, breath: rand(0, TAU) };
       });
-      this.edges = buildEdges(this.nodes);
+      // dendrites: each link bows slightly to one side and remembers how recently a signal ran along it
+      this.edges = buildEdges(this.nodes).map(([i, j]) => ({ i, j, bulge: rand(-0.22, 0.22), heat: 0, w: rand(0.6, 1.3), cx: 0, cy: 0 }));
       this.signals = [];
+      this.spin = rand(-0.035, 0.035);
+    }
+
+    fire(e, dir, hops, speed = rand(0.5, 1.1)) {
+      this.signals.push({ e, dir, t: dir > 0 ? 0 : 1, speed, hops });
     }
 
     update(dt, t) {
       this.scale += (this.targetScale - this.scale) * Math.min(1, dt * 4);
       this.pulse = Math.max(0, this.pulse - dt * 1.6);
       const R = this.r * this.scale * (1 + this.pulse * 0.08);
+      // the whole lattice turns very slowly, and every neuron drifts a little on its own
+      const rot = t * this.spin, cr = Math.cos(rot), sr = Math.sin(rot);
       for (const n of this.nodes) {
-        n.x = this.x + (n.bx + Math.sin(t * n.sp + n.ph) * 0.035) * R;
-        n.y = this.y + (n.by + Math.cos(t * n.sp * 0.8 + n.ph) * 0.035) * R;
-        n.glow = Math.max(0, n.glow - dt * 2.2);
+        const wx = n.bx + Math.sin(t * n.sp + n.ph) * 0.03, wy = n.by + Math.cos(t * n.sp * 0.8 + n.ph) * 0.03;
+        n.x = this.x + (wx * cr - wy * sr) * R;
+        n.y = this.y + (wx * sr + wy * cr) * R;
+        n.glow = Math.max(0, n.glow - dt * 1.8);
+        n.ring = Math.max(0, n.ring - dt * 1.4);
+      }
+      for (const e of this.edges) {
+        e.heat = Math.max(0, e.heat - dt * 1.2);
+        const a = this.nodes[e.i], b = this.nodes[e.j];
+        e.cx = (a.x + b.x) / 2 - (b.y - a.y) * e.bulge;   // control point, off to one side
+        e.cy = (a.y + b.y) / 2 + (b.x - a.x) * e.bulge;
       }
       // new signals: more when she's thinking, when an agent is working, or when a message just landed
-      const rate = (this.energy + this.pulse * 2) * (reduced ? 2 : 5) * (this.nodes.length / 40);
+      const rate = (this.energy + this.pulse * 2) * (reduced ? 1.5 : 3.2) * (this.nodes.length / 40);
       if (this.edges.length && Math.random() < rate * dt) {
-        const dir = Math.random() < 0.5 ? 1 : -1;
-        this.signals.push({ e: Math.floor(Math.random() * this.edges.length), t: dir > 0 ? 0 : 1, dir, speed: rand(0.7, 1.6), bounces: 1 + Math.floor(Math.random() * 3) });
+        this.fire(Math.floor(Math.random() * this.edges.length), Math.random() < 0.5 ? 1 : -1, 2 + Math.floor(Math.random() * 4));
       }
       for (const s of this.signals) {
         s.t += s.dir * s.speed * dt;
-        if (s.t > 1 || s.t < 0) {
-          const end = this.nodes[this.edges[s.e][s.dir > 0 ? 1 : 0]];
-          end.glow = 1;
-          if (s.bounces-- > 0) { s.dir *= -1; s.t = Math.min(1, Math.max(0, s.t)); }
-          else s.dead = true;
+        if (s.t >= 1 || s.t <= 0) {
+          const e = this.edges[s.e];
+          const at = s.dir > 0 ? e.j : e.i;
+          const node = this.nodes[at];
+          node.glow = 1;
+          node.ring = 1;
+          e.heat = 1;
+          s.dead = true;
+          if (s.hops > 0) {
+            // the neuron fires on: usually along another of its links, sometimes straight back
+            const onward = [];
+            this.edges.forEach((ed, k) => { if (k !== s.e && (ed.i === at || ed.j === at)) onward.push({ ed, k }); });
+            if (onward.length && Math.random() < 0.7) {
+              const pick = onward[Math.floor(Math.random() * onward.length)];
+              this.fire(pick.k, pick.ed.i === at ? 1 : -1, s.hops - 1, s.speed);
+            } else {
+              this.fire(s.e, -s.dir, s.hops - 1, s.speed);
+            }
+          }
         }
       }
       this.signals = this.signals.filter((s) => !s.dead);
-      if (this.signals.length > 60) this.signals.splice(0, this.signals.length - 60);
+      if (this.signals.length > 70) this.signals.splice(0, this.signals.length - 70);
     }
 
     draw(t) {
@@ -537,48 +567,59 @@ void main() {
         ctx.arc(this.x, this.y, R, 0, TAU);
         ctx.fill();
       }
-      // lattice
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = `hsla(${h}, 90%, 80%, ${(0.06 + this.energy * 0.08) * A})`;
-      ctx.beginPath();
-      for (const [i, j] of this.edges) {
-        ctx.moveTo(this.nodes[i].x, this.nodes[i].y);
-        ctx.lineTo(this.nodes[j].x, this.nodes[j].y);
-      }
-      ctx.stroke();
-      // neurons
-      for (const n of this.nodes) {
-        if (n.glow > 0) {
-          ctx.fillStyle = `hsla(${h}, 100%, 82%, ${n.glow * 0.45 * A})`;
-          ctx.beginPath();
-          ctx.arc(n.x, n.y, n.size * (2.5 + n.glow * 3), 0, TAU);
-          ctx.fill();
-        }
-        ctx.fillStyle = `hsla(${h}, 100%, 90%, ${0.8 * A})`;
+      // dendrites: gently curved links that light up while a signal runs along them
+      ctx.lineCap = 'round';
+      for (const e of this.edges) {
+        const a = this.nodes[e.i], b = this.nodes[e.j];
+        ctx.lineWidth = e.w + e.heat * 1.2;
+        ctx.strokeStyle = `hsla(${h}, 90%, 82%, ${(0.05 + this.energy * 0.06 + e.heat * 0.5) * A})`;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, n.size, 0, TAU);
-        ctx.fill();
+        ctx.moveTo(a.x, a.y);
+        ctx.quadraticCurveTo(e.cx, e.cy, b.x, b.y);
+        ctx.stroke();
       }
-      // signals, with a short tail behind each
-      for (const s of this.signals) {
-        const [i, j] = this.edges[s.e];
-        const a = this.nodes[i], b = this.nodes[j];
-        for (let k = 0; k < 4; k++) {
-          const tt = Math.min(1, Math.max(0, s.t - s.dir * k * 0.035));
-          const px = a.x + (b.x - a.x) * tt, py = a.y + (b.y - a.y) * tt;
-          ctx.fillStyle = `hsla(${h}, 100%, ${k ? 85 : 97}%, ${(1 - k / 4) * 0.9 * A})`;
+      // somas: a soft halo that breathes, a bright core, and a ripple when one fires
+      for (const n of this.nodes) {
+        const s = n.size * (0.75 + 0.25 * n.z) * (0.85 + 0.15 * Math.sin(t * 1.3 + n.breath));
+        const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, s * 5);
+        halo.addColorStop(0, `hsla(${h}, 100%, 85%, ${(0.22 + n.glow * 0.6) * A})`);
+        halo.addColorStop(1, `hsla(${h}, 100%, 80%, 0)`);
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, s * 5, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = `hsla(${h}, 100%, ${92 + n.glow * 8}%, ${(0.75 + n.glow * 0.25) * A})`;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, s * (1 + n.glow * 0.6), 0, TAU);
+        ctx.fill();
+        if (n.ring > 0) {
+          const k = 1 - n.ring;
+          ctx.lineWidth = 0.3 + 1.2 * n.ring;
+          ctx.strokeStyle = `hsla(${h}, 100%, 88%, ${n.ring * 0.7 * A})`;
           ctx.beginPath();
-          ctx.arc(px, py, 2.6 - k * 0.5, 0, TAU);
+          ctx.arc(n.x, n.y, s * (2 + k * 9), 0, TAU);
+          ctx.stroke();
+        }
+      }
+      // signals: luminous pulses running along the dendrites, each with a glowing tail
+      for (const sg of this.signals) {
+        const e = this.edges[sg.e], a = this.nodes[e.i], b = this.nodes[e.j];
+        const P = (u) => { const v = 1 - u; return [v * v * a.x + 2 * v * u * e.cx + u * u * b.x, v * v * a.y + 2 * v * u * e.cy + u * u * b.y]; };
+        for (let k = 9; k >= 0; k--) {
+          const [px, py] = P(Math.min(1, Math.max(0, sg.t - sg.dir * k * 0.028)));
+          const f = 1 - k / 10;
+          ctx.fillStyle = `hsla(${h}, 100%, ${k ? 86 : 98}%, ${f * f * 0.9 * A})`;
+          ctx.beginPath();
+          ctx.arc(px, py, 0.8 + f * 2.2, 0, TAU);
           ctx.fill();
         }
-        const tt = Math.min(1, Math.max(0, s.t));
-        const px = a.x + (b.x - a.x) * tt, py = a.y + (b.y - a.y) * tt;
-        const halo = ctx.createRadialGradient(px, py, 0, px, py, 9);
-        halo.addColorStop(0, `hsla(${h}, 100%, 85%, ${0.5 * A})`);
+        const [hx, hy] = P(Math.min(1, Math.max(0, sg.t)));
+        const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, 11);
+        halo.addColorStop(0, `hsla(${h}, 100%, 88%, ${0.6 * A})`);
         halo.addColorStop(1, `hsla(${h}, 100%, 85%, 0)`);
         ctx.fillStyle = halo;
         ctx.beginPath();
-        ctx.arc(px, py, 9, 0, TAU);
+        ctx.arc(hx, hy, 11, 0, TAU);
         ctx.fill();
       }
       ctx.restore();

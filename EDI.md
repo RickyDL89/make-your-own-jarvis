@@ -6,10 +6,13 @@ question with her brain; the skills kick in automatically when what you say matc
 
 ## The look
 
-EDI is a nebula: drifting gas with a lattice of neurons inside, and signals that run along the links
-and bounce back and forth. Her colour walks around the whole spectrum while she is idle or thinking;
-**listening is always cyan** and **speaking is always gold**, so you can tell what she is doing at a
-glance. Her voice drives the pulse of the core. Click the nebula to talk, the same as holding Space.
+EDI is a planetary nebula drawn by a WebGL shader: a clumpy ring of gas with dark lanes and a bright
+inner rim, fine filaments pointing at a central star, a translucent interior and a faint outer shell,
+all drifting slowly. A lattice of neurons sits inside with signals running along the links and
+bouncing back and forth. Her colour walks around the whole spectrum while she is idle or thinking
+(the ring and the interior always stay complementary); **listening is always cyan** and **speaking is
+always gold**, so you can tell what she is doing at a glance. Her voice makes the star breathe. Click
+the nebula to talk, the same as holding Space. Without WebGL the gas falls back to a soft glow.
 
 ## Agents
 
@@ -80,10 +83,24 @@ This reads classic Outlook through Windows automation, so classic Outlook has to
 If you only use the new Outlook app, she says so instead of guessing. Open classic Outlook once, add your account,
 and it starts working.
 
+## The brain
+
+EDI thinks with **Claude Code** when it is installed: she keeps one headless `claude` session alive
+in the background (Haiku by default, about a second and a half per reply), so the conversation carries
+over from one message to the next and even across restarts. It runs on your Claude subscription, with
+no daily cap. The cost that Claude Code prints is the equivalent API price, not a charge, when you are
+signed in with a claude.ai plan. Agents use short one-off Claude calls with their own persona.
+
+Sign in once by running `claude` in a terminal. If Claude Code is missing, or `BRAIN=openrouter`, she
+uses the OpenRouter key instead (free models there allow about 50 questions a day). If Claude fails
+and an OpenRouter key is set, she falls back to it for that reply.
+
 ## Settings added to `.env`
 
 | Setting | What it does | Default |
 |---|---|---|
+| `BRAIN` | `claude` or `openrouter` | Claude Code if installed, else OpenRouter |
+| `CLAUDE_MODEL` | The Claude model she thinks with | `claude-haiku-5-5` |
 | `EDI_LOCATION` | Your city, for the weather | worked out from your connection |
 | `BRAVE_API_KEY` | Optional key for real web search | off |
 
