@@ -49,6 +49,14 @@
     color: var(--muted);
   }
   .pill { display: inline-flex; align-items: center; gap: 8px; margin-right: 22px; }
+  button.pill {
+    padding: 0; margin-right: 0;
+    background: none; border: none; border-radius: 0;
+    font: inherit; letter-spacing: inherit; color: inherit;
+    cursor: pointer;
+  }
+  button.pill:hover { color: var(--text); }
+  button.pill.on { color: var(--cyan); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .dot.on { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
   .dot.off { background: var(--red); box-shadow: 0 0 10px var(--red); }
@@ -193,12 +201,15 @@
       <span class="pill"><span class="dot" id="dotVoice"></span>VOICE &middot; FISH AUDIO</span>
       <span class="pill"><span class="dot" id="dotBrain"></span>BRAIN &middot; OPENROUTER</span>
     </div>
-    <div id="clock"></div>
+    <div>
+      <button class="pill" id="wakeToggle" type="button" title="Say EDI to talk to her without touching anything"><span class="dot" id="dotWake"></span><span id="wakeLabel">WAKE WORD &middot; OFF</span></button>
+      <span class="pill" style="margin-left: 22px; margin-right: 0;" id="clock"></span>
+    </div>
   </header>
 
   <main>
     <h1>E.D.I.</h1>
-    <div class="sub">Just A Rather Very Intelligent System</div>
+    <div class="sub">Enhanced Defense Intelligence</div>
     <div class="reactor" id="reactor" title="Click to talk">
       <div class="ring r1"></div>
       <div class="ring r2"></div>
@@ -211,7 +222,7 @@
   </main>
 
   <footer>
-    <div class="hint">Hold <kbd>SPACE</kbd> or click the core to talk</div>
+    <div class="hint">Hold <kbd>SPACE</kbd> or click the core to talk &middot; or turn on the wake word and just say &ldquo;EDI&rdquo;</div>
     <form id="typeForm">
       <input id="typeBox" placeholder="Or type to EDI..." autocomplete="off">
       <button type="submit">SEND</button>
@@ -232,10 +243,15 @@
   const LABELS = { idle: 'Standing by', listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking' };
   let calls = 'sir';
   let busy = false;
+  let wakeOn = false;      // the wake word toggle in the header
+  let bgRec = null;        // background recogniser that listens for "EDI"
+  let bgActive = false;
 
   function setState(state) {
     document.body.className = 'state-' + state;
     statusEl.textContent = LABELS[state];
+    if (state === 'idle') setTimeout(bgStart, 250);  // back to listening for the wake word
+    else bgStop();                                    // never listen to herself, or over another recogniser
   }
 
   function addLine(cls, who, text) {
@@ -394,19 +410,20 @@
   let listening = false;
   let heard = '';
   let interim = '';
-  function startListening() {
+  function startListening(oneShot = false) {
     if (busy || listening) return;
     if (!Recognition) {
       toast('Voice input needs Chrome or Edge. You can still type below.');
       return;
     }
     stopSpeaking();
+    bgStop();
     heard = '';
     interim = '';
     rec = new Recognition();
     rec.lang = 'en-US';
     rec.interimResults = true;
-    rec.continuous = true;
+    rec.continuous = !oneShot;  // after the wake word she listens for one sentence and stops by herself
     rec.onresult = (e) => {
       interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -462,6 +479,109 @@
     send(text);
   });
 
+  // ---- wake word: say "EDI" and she listens, no keys needed
+  // Speech recognition hears the name in a few different ways, so accept all of them.
+  const WAKE_RE = /\b(?:hey |ok |okay )?(?:edi|eddie|edie|eedee|eedie|e\.? ?d\.? ?i\.?)\b[,.!?]?/i;
+
+  function chime() {
+    // A quick two-note "yes?" so she acknowledges instantly, without a round trip to the voice engine.
+    if (!audioCtx) return;
+    try {
+      const now = audioCtx.currentTime;
+      [[880, 0], [1320, 0.09]].forEach(([freq, at]) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, now + at);
+        gain.gain.exponentialRampToValueAtTime(0.18, now + at + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.16);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now + at);
+        osc.stop(now + at + 0.18);
+      });
+    } catch {}
+  }
+
+  function wakeSetUI() {
+    $('dotWake').className = 'dot ' + (wakeOn ? 'on' : '');
+    $('wakeToggle').classList.toggle('on', wakeOn);
+    $('wakeLabel').textContent = 'WAKE WORD · ' + (wakeOn ? 'ON' : 'OFF');
+  }
+
+  function bgStart() {
+    if (!wakeOn || bgActive || listening || busy || !Recognition) return;
+    if (!document.body.classList.contains('state-idle')) return;
+    const r = new Recognition();
+    r.lang = 'en-US';
+    r.continuous = true;
+    r.interimResults = true;
+    r.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const result = e.results[i];
+        const transcript = result[0].transcript;
+        const m = WAKE_RE.exec(transcript);
+        if (!m || !result.isFinal) continue;
+        const after = transcript.slice(m.index + m[0].length).trim();
+        bgStop();
+        if (after.split(/\s+/).filter(Boolean).length >= 2) {
+          send(after);            // "EDI, what's the weather tomorrow" in one breath
+        } else {
+          chime();                // just "EDI": acknowledge and listen for one sentence
+          startListening(true);
+        }
+        return;
+      }
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        wakeOn = false;
+        try { localStorage.removeItem('edi-wake'); } catch {}
+        wakeSetUI();
+        toast('Microphone blocked, so the wake word is off. Allow the microphone (icon left of the address bar) and turn it on again.');
+      }
+    };
+    r.onend = () => {
+      if (bgRec !== r) return;    // we stopped it on purpose
+      bgActive = false;
+      bgRec = null;
+      setTimeout(bgStart, 400);   // Chrome ends recognition now and then; just start again
+    };
+    try {
+      r.start();
+      bgRec = r;
+      bgActive = true;
+    } catch {
+      bgActive = false;
+    }
+  }
+
+  function bgStop() {
+    if (!bgRec) return;
+    const r = bgRec;
+    bgRec = null;
+    bgActive = false;
+    try { r.abort(); } catch {}
+  }
+
+  $('wakeToggle').addEventListener('click', () => {
+    if (!Recognition) {
+      toast('The wake word needs Chrome or Edge.');
+      return;
+    }
+    wakeOn = !wakeOn;
+    try { wakeOn ? localStorage.setItem('edi-wake', '1') : localStorage.removeItem('edi-wake'); } catch {}
+    wakeSetUI();
+    if (wakeOn) {
+      toast('Wake word on. Say "EDI" and your question, or just "EDI" and wait for the chime. Chrome does the listening, so it only works while this tab is open.');
+      bgStart();
+    } else {
+      bgStop();
+    }
+  });
+  try { wakeOn = localStorage.getItem('edi-wake') === '1'; } catch {}
+  wakeSetUI();
+
   $('wake').addEventListener('click', () => {
     $('wake').remove();
     initAudio();
@@ -469,7 +589,7 @@
     const part = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
     const greeting = `Good ${part}, ${calls}. All systems are online.`;
     showExchange('', greeting);
-    speak(greeting);
+    speak(greeting);  // ends in setState('idle'), which starts listening for the wake word if it's on
   });
 </script>
 </body>

@@ -17,6 +17,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import skills
+
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
 ENV_EXAMPLE = ROOT / ".env.example"
@@ -33,6 +35,8 @@ DEFAULTS = {
     "FISH_MODEL": "s2.1-pro-free",  # S2.1 Pro at $0, free on the Fish Audio API until Nov 30, 2026
     "OPENROUTER_MODEL": "apodex/apodex-1.1-mini:free",  # the brain, free on OpenRouter
     "JARVIS_CALLS_YOU": "sir",
+    "EDI_LOCATION": "",  # your city, for the weather. Empty means: work it out from the connection
+    "BRAVE_API_KEY": "",  # optional, for real web search. Free at https://brave.com/search/api
     "PORT": "8765",
 }
 
@@ -129,7 +133,7 @@ def first_run(cfg: dict[str, str]) -> dict[str, str]:
 
 # ---------------------------------------------------------------- brain (a free OpenRouter model)
 
-_history: list[dict] = []
+_history: list[dict] = skills.load_history()  # picks up where the last session left off
 _lock = threading.Lock()
 
 
@@ -141,9 +145,10 @@ def system_prompt(cfg: dict[str, str]) -> str:
         f'Address the user as "{title}". Be calm, precise, quietly witty and loyal. '
         "Everything you write is spoken aloud by a voice engine, so reply in one or two short "
         "sentences of plain spoken English. Never use markdown, lists, emojis, URLs, code, or "
-        "anything in square brackets or asterisks. If asked to do something on the computer that "
-        "you can't do from here, say so briefly and stay in character. "
-        f"The local date and time is {time.strftime('%A, %B %d, %Y, %I:%M %p')}."
+        "anything in square brackets or asterisks. "
+        + skills.ABILITIES
+        + skills.memory_prompt()
+        + f"The local date and time is {time.strftime('%A, %B %d, %Y, %I:%M %p')}."
     )
 
 
@@ -177,12 +182,16 @@ def openrouter_post(cfg: dict[str, str], payload: dict) -> dict:
     return data
 
 
-def think(cfg: dict[str, str], text: str) -> str:
+def think(cfg: dict[str, str], text: str, context: str | None = None) -> str:
+    """Ask the brain. `context` is live data a skill just fetched (weather, search results, calendar)."""
     with _lock:
         messages = list(_history) + [{"role": "user", "content": text}]
+    system = [{"role": "system", "content": system_prompt(cfg)}]
+    if context:
+        system.append({"role": "system", "content": context})
     payload = {
         "model": cfg["OPENROUTER_MODEL"],
-        "messages": [{"role": "system", "content": system_prompt(cfg)}, *messages],
+        "messages": [*system, *messages],
         "max_tokens": 4000,
         "reasoning": {"effort": "none"},  # skip the thinking step, so spoken replies come back fast
     }
@@ -200,6 +209,7 @@ def think(cfg: dict[str, str], text: str) -> str:
     with _lock:
         _history.extend([{"role": "user", "content": text}, {"role": "assistant", "content": reply}])
         del _history[:-16]  # keep the last 8 exchanges
+        skills.save_history(list(_history))
     return reply
 
 
@@ -362,6 +372,11 @@ class Handler(BaseHTTPRequestHandler):
             if protocol:
                 for url in protocol.get("open") or []:
                     open_url(str(url))
+                for target in protocol.get("run") or []:  # local apps and files, see skills.launch
+                    try:
+                        skills.launch(str(target))
+                    except OSError as err:
+                        log(f"Couldn't run {target}: {err}")
                 if protocol.get("voice"):
                     voice_id = str(protocol["voice"]).strip()
                     _voice_override = None if voice_id == "default" else voice_id
@@ -369,11 +384,18 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"EDI:    {reply}  (protocol)")
                 self._json(200, {"reply": reply, "protocol": protocol["say"]})
                 return
+            # Skills: things EDI does herself (open an app, remember a fact) answer right away.
+            # Things that need live data (weather, search, Outlook) fetch it, then let the brain answer.
+            skill = skills.handle(cfg, text)
+            if skill and skill.reply:
+                log(f"EDI:    {skill.reply}  ({skill.name})")
+                self._json(200, {"reply": skill.reply, "skill": skill.name})
+                return
             if not cfg.get("OPENROUTER_API_KEY"):
                 self._json(200, {"reply": f"My brain isn't connected yet, {title}. Add OPENROUTER_API_KEY to the .env file and restart me.", "error": "brain"})
                 return
             try:
-                reply = think(cfg, text)
+                reply = think(cfg, text, skill.context if skill else None)
             except OpenRouterError as err:
                 log(f"OpenRouter error {err}")
                 self._json(200, {"reply": brain_error(err, cfg), "error": "brain"})
@@ -382,8 +404,8 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"Unexpected error: {err!r}")
                 self._json(200, {"reply": f"Something went wrong in my head, {title}. The details are in the EDI window.", "error": "internal"})
                 return
-            log(f"EDI:    {reply}")
-            self._json(200, {"reply": reply})
+            log(f"EDI:    {reply}" + (f"  ({skill.name})" if skill else ""))
+            self._json(200, {"reply": reply, **({"skill": skill.name} if skill else {})})
             return
 
         if path == "/api/tts":
@@ -400,6 +422,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/reset":
             with _lock:
                 _history.clear()
+                skills.save_history([])
             self._json(200, {"ok": True})
             return
 
@@ -448,6 +471,7 @@ def main() -> None:
     print(f"    Open {url}  (Chrome or Edge, for voice input)")
     print(f"    Voice: Fish Audio {cfg['FISH_VOICE_ID']} ({cfg['FISH_MODEL']})")
     print(f"    Brain: OpenRouter {cfg['OPENROUTER_MODEL']}" if cfg.get("OPENROUTER_API_KEY") else "    Brain: not connected yet")
+    print("    Skills: open apps and files, memory, weather, web search, Outlook")
     print("    Close this window to shut EDI down.")
     print("  ==================================================\n")
     if not NO_BROWSER:

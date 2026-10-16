@@ -1,0 +1,7 @@
+{
+  "_help": "Friendly names for 'open ...'. Left side is what you say, right side is a program, file, folder or website. EDI also finds anything in your Start Menu by itself, so you only need entries for nicknames and files.",
+  "whatsapp": "https://web.whatsapp.com",
+  "youtube": "https://www.youtube.com",
+  "spotify": "https://open.spotify.com",
+  "_example_file": "my budget -> C:\\Users\\You\\Documents\\budget.xlsx  (copy this line without the underscore and fix the path)"
+}

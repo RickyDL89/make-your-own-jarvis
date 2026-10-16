@@ -17,6 +17,7 @@
   {
     "say": "activate work mode",
     "reply": "Of course, {you}. Pulling up your workspace.",
-    "open": ["https://mail.google.com", "https://calendar.google.com"]
+    "open": ["https://mail.google.com", "https://calendar.google.com"],
+    "run": ["outlook.exe"]
   }
 ]
