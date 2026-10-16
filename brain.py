@@ -44,7 +44,7 @@ def _flags() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-PERSONA_MARK = "You are EDI"  # in every brain process's command line, and in nothing else on the machine
+PERSONA_MARKS = ("You are EDI", "You are the Operator")  # in EDI's own claude processes' command lines, and in nothing else on the machine
 
 
 def reap_orphans(log) -> None:
@@ -55,9 +55,13 @@ def reap_orphans(log) -> None:
     """
     if os.name != "nt":
         return
+    marks = " -or ".join(f"$_.CommandLine -like '*{m}*'" for m in PERSONA_MARKS)
     script = (
-        "$mine = Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'claude*' -and $_.CommandLine -like '*" + PERSONA_MARK + "*' };"
-        "foreach ($p in $mine) { if (-not (Get-Process -Id $p.ParentProcessId -ErrorAction SilentlyContinue)) { Stop-Process -Id $p.ProcessId -Force; Write-Output $p.ProcessId } }"
+        "$mine = Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'claude*' -and (" + marks + ") };"
+        "foreach ($p in $mine) { if (-not (Get-Process -Id $p.ParentProcessId -ErrorAction SilentlyContinue)) {"
+        "  $kids = Get-CimInstance Win32_Process -Filter \"ParentProcessId = $($p.ProcessId)\";"
+        "  foreach ($k in $kids) { Stop-Process -Id $k.ProcessId -Force -ErrorAction SilentlyContinue };"
+        "  Stop-Process -Id $p.ProcessId -Force; Write-Output $p.ProcessId } }"
     )
     try:
         proc = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],  # noqa: S603
