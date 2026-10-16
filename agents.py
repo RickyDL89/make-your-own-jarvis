@@ -39,6 +39,12 @@ SPAWN_RE = re.compile(
     r"send|dispatch|assign|deploy|bring in|use)\s+(?:an?\s+|another\s+|the\s+|your\s+)?(?:(\w+)\s+)?agent\s*"
     r"(?:to|that|and|who|which|:|,)?\s*(.*?)[.!?]*$", re.I)
 DELEGATE_RE = re.compile(r"^(?:edi,?\s+)?(?:please\s+)?delegate\s+(.+?)\s+to\s+(?:an?\s+)?(?:(\w+)\s+)?agent[.!?]*$", re.I)
+# Speech recognition turns "spawn a research agent" into "spoon a research agent" or "spooner researcher",
+# so also accept any sentence that mentions an agent, or a role by name, followed by a task.
+ANY_AGENT_RE = re.compile(r"\b(?:an?|another|the|your|one)\s+(?:(\w+)\s+)?agents?\b\s*(?:to|that|who|which|and|:|,)?\s*(.*?)[.!?]*$", re.I)
+ROLE_NOUNS = {"researcher": "research", "analyst": "analyst", "writer": "writer", "coder": "coder", "developer": "coder",
+              "planner": "planner", "meteorologist": "weather", "navigator": "travel", "scout": "scout"}
+ROLE_NOUN_RE = re.compile(r"^(?:\w+\W+){0,3}?(?:an?\s+|another\s+|the\s+)?(" + "|".join(ROLE_NOUNS) + r")\b\s*(?:to|that|who|which|and|:|,)?\s*(.*?)[.!?]*$", re.I)
 TEST_RE = re.compile(r"^(?:edi,?\s+)?(?:please\s+)?(?:(?:run|do|start)\s+(?:an?\s+|the\s+)?agent\s+(?:test|demo)|"
                      r"(?:test|demo|try(?: out)?|show me)\s+(?:your\s+|the\s+)?agents?(?:\s+system)?)[.!?]*$", re.I)
 
@@ -84,11 +90,20 @@ class Runtime:
         if m:
             return {"role": m.group(2), "task": m.group(1).strip()}
         m = SPAWN_RE.match(text)
-        if m and m.group(2).strip():
-            return {"role": m.group(1), "task": m.group(2).strip()}
         if m:
-            return {"role": m.group(1), "task": ""}
+            return {"role": m.group(1), "task": m.group(2).strip()}
+        m = ANY_AGENT_RE.search(text)
+        not_a_request = r"\b(what|how|why|which|do you|are you|is there|was|were|about|tell me|explain|define)\b"
+        if m and not re.search(not_a_request, text[:m.start()], re.I):
+            return {"role": m.group(1), "task": m.group(2).strip()}
+        m = ROLE_NOUN_RE.match(text)
+        if m and not re.search(not_a_request, text[:m.start(1)], re.I):
+            return {"role": ROLE_NOUNS[m.group(1).lower()], "task": m.group(2).strip()}
         return None
+
+    def missing_task_reply(self, role_word: str | None, you: str) -> str:
+        name = ROLES.get((role_word or "").lower(), ("agent", ""))[0].lower()
+        return f"Happy to, {you}. What should the {name} work on? Say the task after the word to, for example: get a researcher to find tomorrow's weather."
 
     # ---- spawning
 

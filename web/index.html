@@ -73,7 +73,7 @@
   .below {
     position: fixed;
     left: 0; right: 0;
-    top: calc(42vh + 0.2 * min(100vw, 100vh) + 26px);
+    top: calc(42vh + 0.22 * min(100vw, 100vh) + 30px);
     z-index: 1;
     display: flex;
     flex-direction: column;
@@ -344,22 +344,105 @@
     return edges;
   }
 
+  // ---- the starfield behind everything
+  let stars = [], bright = [];
+  function makeStars() {
+    const n = reduced ? 120 : Math.min(600, Math.round((W * H) / 6000));
+    stars = Array.from({ length: n }, () => ({
+      x: Math.random() * W, y: Math.random() * H, s: Math.random() < 0.08 ? rand(1.4, 2.4) : rand(0.3, 1.1),
+      b: rand(0.25, 0.9), tw: rand(0, TAU), tws: rand(0.3, 1.5), hue: Math.random() < 0.3 ? 200 : 45,
+    }));
+    bright = Array.from({ length: 7 }, () => ({ x: Math.random() * W, y: Math.random() * H, s: rand(2.2, 3.6), tw: rand(0, TAU), hue: rand(185, 215) }));
+  }
+  function drawStars(t) {
+    ctx.save();
+    for (const s of stars) {
+      const a = s.b * (0.75 + 0.25 * Math.sin(t * s.tws + s.tw));
+      ctx.fillStyle = `hsla(${s.hue}, 40%, 92%, ${a})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.s, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b of bright) {
+      const k = 0.8 + 0.2 * Math.sin(t * 0.7 + b.tw);
+      const g = b.s * 7;
+      const halo = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, g);
+      halo.addColorStop(0, `hsla(${b.hue}, 60%, 98%, ${0.9 * k})`);
+      halo.addColorStop(0.2, `hsla(${b.hue}, 90%, 80%, ${0.45 * k})`);
+      halo.addColorStop(1, `hsla(${b.hue}, 90%, 70%, 0)`);
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, g, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = `hsla(${b.hue}, 60%, 95%, ${0.35 * k})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(b.x - g, b.y); ctx.lineTo(b.x + g, b.y);
+      ctx.moveTo(b.x, b.y - g); ctx.lineTo(b.x, b.y + g);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   class Nebula {
     constructor(opts) {
       Object.assign(this, { x: 0, y: 0, r: 100, hue: 200, label: '', status: '', scale: 0, targetScale: 1,
-                            alpha: 1, energy: 0.45, level: 0, pulse: 0, blobs: 22, nodes: 40 }, opts);
-      const nb = reduced ? Math.ceil(this.blobs / 2) : this.blobs;
+                            alpha: 1, energy: 0.45, level: 0, pulse: 0, particles: 520, nodes: 40 }, opts);
+      const np = reduced ? Math.ceil(this.particles / 2) : this.particles;
       const nn = reduced ? Math.ceil(this.nodes / 2) : this.nodes;
-      this.blobs = Array.from({ length: nb }, () => ({
-        a: rand(0, TAU), d: rand(0.04, 0.72), s: rand(0.28, 0.72), spin: rand(-0.09, 0.09),
-        ph: rand(0, TAU), wob: rand(0.12, 0.35), hueOff: rand(-30, 30), al: rand(0.16, 0.38),
-      }));
-      this.nodes = Array.from({ length: nn }, () => {
-        const a = rand(0, TAU), d = 0.1 + Math.sqrt(Math.random()) * 0.8;
-        return { bx: Math.cos(a) * d, by: Math.sin(a) * d, x: 0, y: 0, ph: rand(0, TAU), sp: rand(0.25, 0.7), size: rand(1.1, 2.4), glow: 0 };
+      // A planetary nebula: a bright, clumpy ring of dust around a dim interior with a star in the
+      // middle. The ring is a slightly squashed, slightly tilted ellipse, like an eye.
+      this.squash = rand(0.82, 0.9);
+      this.tilt = rand(-0.5, 0.5);
+      this.spin = rand(-0.012, 0.012);
+      const ph = [rand(0, TAU), rand(0, TAU), rand(0, TAU)];
+      const clumpy = (a) => 0.55 + 0.45 * Math.sin(2 * a + ph[0]) * Math.sin(3 * a + ph[1]) + 0.25 * Math.sin(7 * a + ph[2]);
+      const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(TAU * Math.random());
+      // dust grains: the ring itself, denser where the clumps are, a few drifting in and out
+      this.dust = [];
+      while (this.dust.length < np) {
+        const a = rand(0, TAU);
+        if (Math.random() > Math.max(0.12, clumpy(a))) continue;
+        const rr = 0.8 + gauss() * 0.1;
+        this.dust.push({ a, rr, size: rand(0.6, 2.3), br: rand(0.3, 1), tw: rand(0, TAU), tws: rand(0.4, 2.2), hueOff: rand(-16, 16) });
+      }
+      // soft clouds along the ring that give it body: two layers, a bright gold one on the inside
+      // and a dimmer magenta one outside, like the real thing
+      const nc = reduced ? 16 : 44;
+      this.clouds = Array.from({ length: nc }, (_, i) => {
+        const outerLayer = i % 2 === 1;
+        const a = (i / nc) * TAU + rand(-0.1, 0.1);
+        return {
+          a, rr: outerLayer ? rand(0.86, 0.98) : rand(0.72, 0.86), s: outerLayer ? rand(0.2, 0.32) : rand(0.16, 0.28),
+          al: (outerLayer ? rand(0.08, 0.16) : rand(0.16, 0.3)) * Math.max(0.4, clumpy(a)),
+          hueOff: outerLayer ? rand(-50, -25) : rand(-10, 24),
+        };
+      });
+      // the faint outer shell beyond the ring
+      this.wisps = Array.from({ length: reduced ? 14 : 34 }, () => ({ a: rand(0, TAU), rr: rand(1.0, 1.42), s: rand(0.1, 0.22), al: rand(0.03, 0.08), ph: rand(0, TAU) }));
+      // comet-knot filaments on the inner edge, pointing at the star
+      this.filaments = Array.from({ length: reduced ? 24 : 60 }, () => ({ a: rand(0, TAU), r0: rand(0.5, 0.64), len: rand(0.07, 0.16), w: rand(0.5, 1.3), ph: rand(0, TAU), al: rand(0.25, 0.65) }));
+      // neurons: some on the ring, most across the interior, so their links read as the nebula's own filaments
+      this.nodes = Array.from({ length: nn }, (_, i) => {
+        const onRing = i % 5 < 2;
+        const a = rand(0, TAU), d = onRing ? 0.8 + gauss() * 0.04 : 0.12 + Math.sqrt(Math.random()) * 0.55;
+        const [bx, by] = this.unit(a, d);
+        return { bx, by, x: 0, y: 0, ph: rand(0, TAU), sp: rand(0.2, 0.6), size: onRing ? rand(1, 1.8) : rand(1.1, 2.2), glow: 0 };
       });
       this.edges = buildEdges(this.nodes);
       this.signals = [];
+    }
+
+    // polar (angle, radius fraction) -> unit coordinates on the tilted ellipse
+    unit(a, rr) {
+      const x = Math.cos(a) * rr, y = Math.sin(a) * rr * this.squash;
+      const c = Math.cos(this.tilt), s = Math.sin(this.tilt);
+      return [x * c - y * s, x * s + y * c];
+    }
+    pt(a, rr, R) {
+      const [ux, uy] = this.unit(a, rr);
+      return [this.x + ux * R, this.y + uy * R];
     }
 
     update(dt, t) {
@@ -392,45 +475,77 @@
 
     draw(t) {
       if (this.scale < 0.01) return;
-      const R = this.r * this.scale * (1 + this.pulse * 0.12);
+      const R = this.r * this.scale * (1 + this.pulse * 0.1);
       const A = this.alpha;
-      const h = this.hue;
+      const h = this.hue;              // the ring
+      const hin = h + 185;             // the interior glow, complementary to the ring
+      const hw = h - 40;               // the outer shell
+      const hhot = h + 26;             // the brightest dust
+      const lv = this.level;
+      const rot = t * this.spin;
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      // a faint haze around the whole cloud, so it reads as a nebula rather than a knot of dots
-      const haze = ctx.createRadialGradient(this.x, this.y, R * 0.2, this.x, this.y, R * 1.35);
-      haze.addColorStop(0, `hsla(${h}, 85%, 55%, ${0.16 * A})`);
-      haze.addColorStop(0.6, `hsla(${h + 20}, 80%, 50%, ${0.05 * A})`);
-      haze.addColorStop(1, `hsla(${h}, 80%, 45%, 0)`);
-      ctx.fillStyle = haze;
+      // interior: a dim translucent glow
+      const inner = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, R * 0.8);
+      inner.addColorStop(0, `hsla(${hin}, 80%, 72%, ${(0.34 + lv * 0.15) * A})`);
+      inner.addColorStop(0.6, `hsla(${hin}, 75%, 58%, ${0.22 * A})`);
+      inner.addColorStop(1, `hsla(${hin}, 70%, 50%, 0)`);
+      ctx.fillStyle = inner;
       ctx.beginPath();
-      ctx.arc(this.x, this.y, R * 1.35, 0, TAU);
+      ctx.arc(this.x, this.y, R * 0.78, 0, TAU);
       ctx.fill();
-      // gas
-      for (const b of this.blobs) {
-        const ang = b.a + t * b.spin;
-        const px = this.x + Math.cos(ang) * b.d * R + Math.sin(t * b.wob + b.ph) * 0.06 * R;
-        const py = this.y + Math.sin(ang) * b.d * R + Math.cos(t * b.wob * 0.9 + b.ph) * 0.06 * R;
-        const rad = b.s * R * (1 + this.level * 0.18);
+      // outer shell
+      for (const w of this.wisps) {
+        const [px, py] = this.pt(w.a + rot * 0.5, w.rr + Math.sin(t * 0.15 + w.ph) * 0.02, R);
+        const rad = w.s * R * 1.6;
         const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
-        g.addColorStop(0, `hsla(${h + b.hueOff}, 88%, 62%, ${b.al * A})`);
-        g.addColorStop(0.55, `hsla(${h + b.hueOff}, 85%, 50%, ${b.al * 0.35 * A})`);
-        g.addColorStop(1, `hsla(${h + b.hueOff}, 80%, 45%, 0)`);
+        g.addColorStop(0, `hsla(${hw}, 75%, 55%, ${w.al * A})`);
+        g.addColorStop(1, `hsla(${hw}, 75%, 50%, 0)`);
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(px, py, rad, 0, TAU);
         ctx.fill();
       }
-      // core
-      const cr = R * (0.32 + this.level * 0.25 + this.pulse * 0.1);
-      const core = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, cr);
-      core.addColorStop(0, `hsla(${h}, 60%, 98%, ${0.95 * A})`);
-      core.addColorStop(0.25, `hsla(${h}, 95%, 75%, ${0.75 * A})`);
-      core.addColorStop(1, `hsla(${h}, 90%, 55%, 0)`);
-      ctx.fillStyle = core;
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, cr, 0, TAU);
-      ctx.fill();
+      // dust clouds along the ring
+      for (const c of this.clouds) {
+        const [px, py] = this.pt(c.a + rot, c.rr, R);
+        const rad = c.s * R * (1 + lv * 0.25);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
+        g.addColorStop(0, `hsla(${h + c.hueOff}, 90%, 62%, ${(c.al + lv * 0.08) * A})`);
+        g.addColorStop(0.6, `hsla(${h + c.hueOff - 15}, 85%, 50%, ${c.al * 0.35 * A})`);
+        g.addColorStop(1, `hsla(${hw}, 80%, 45%, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(px, py, rad, 0, TAU);
+        ctx.fill();
+      }
+      // filaments on the inner edge, pointing at the star
+      ctx.lineCap = 'round';
+      for (const f of this.filaments) {
+        const wob = Math.sin(t * 0.25 + f.ph) * 0.015;
+        const [x1, y1] = this.pt(f.a + rot, f.r0 + wob, R);
+        const [x2, y2] = this.pt(f.a + rot, f.r0 + f.len + wob, R);
+        const g = ctx.createLinearGradient(x1, y1, x2, y2);
+        g.addColorStop(0, `hsla(${hin}, 70%, 85%, 0)`);
+        g.addColorStop(1, `hsla(${hhot}, 90%, 80%, ${f.al * A})`);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = f.w;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+      // dust grains
+      for (const d of this.dust) {
+        const [px, py] = this.pt(d.a + rot, d.rr, R);
+        const tw = 0.65 + 0.35 * Math.sin(t * d.tws + d.tw);
+        const hue = d.rr < 0.75 ? hin : d.rr > 0.9 ? hw : (d.br > 0.7 ? hhot : h) + d.hueOff;
+        const light = d.rr < 0.75 ? 88 : d.br > 0.8 ? 86 : 68;
+        ctx.fillStyle = `hsla(${hue}, 95%, ${light}%, ${d.br * tw * (0.75 + lv * 0.4) * A})`;
+        ctx.beginPath();
+        ctx.arc(px, py, d.size * (0.9 + lv * 0.3), 0, TAU);
+        ctx.fill();
+      }
       // lattice
       ctx.lineWidth = 1;
       ctx.strokeStyle = `hsla(${h}, 90%, 78%, ${(0.07 + this.energy * 0.09) * A})`;
@@ -475,6 +590,23 @@
         ctx.arc(px, py, 9, 0, TAU);
         ctx.fill();
       }
+      // the central star, which breathes with her voice
+      const sr = R * (0.1 + lv * 0.12 + this.pulse * 0.05);
+      const star = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, sr);
+      star.addColorStop(0, `hsla(${hin}, 40%, 100%, ${0.95 * A})`);
+      star.addColorStop(0.3, `hsla(${hin}, 90%, 80%, ${0.6 * A})`);
+      star.addColorStop(1, `hsla(${hin}, 90%, 70%, 0)`);
+      ctx.fillStyle = star;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, sr, 0, TAU);
+      ctx.fill();
+      const gl = R * (0.08 + lv * 0.1);
+      ctx.strokeStyle = `hsla(${hin}, 60%, 95%, ${0.35 * A})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(this.x - gl, this.y); ctx.lineTo(this.x + gl, this.y);
+      ctx.moveTo(this.x, this.y - gl); ctx.lineTo(this.x, this.y + gl);
+      ctx.stroke();
       ctx.restore();
       // name and status, for agents
       if (this.label) {
@@ -495,7 +627,7 @@
   }
 
   // ---- the scene: EDI in the middle, agents around her, packets flying between them
-  const edi = new Nebula({ hue: 200, energy: 0.45, blobs: 24, nodes: 44 });
+  const edi = new Nebula({ hue: 200, energy: 0.45, particles: 900, nodes: 44 });
   edi.targetScale = 1;
   const agentsById = new Map();
   const packets = [];
@@ -508,7 +640,8 @@
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     edi.x = W / 2; edi.y = H * 0.42;
-    edi.r = Math.max(80, Math.min(260, Math.min(W, H) * 0.2));
+    edi.r = Math.max(80, Math.min(280, Math.min(W, H) * 0.22));
+    makeStars();
     for (const a of agentsById.values()) placeAgent(a);
   }
   function placeAgent(a) {
@@ -534,6 +667,7 @@
     document.documentElement.style.setProperty('--accent', css);
 
     ctx.clearRect(0, 0, W, H);
+    drawStars(t);
     edi.update(dt, t);
     for (const a of agentsById.values()) {
       a.update(dt, t);
@@ -598,7 +732,7 @@
   }
   function ensureAgent(info) {
     if (agentsById.has(info.id)) return agentsById.get(info.id);
-    const a = new Nebula({ id: info.id, hue: info.hue, label: info.name, status: info.status, energy: 1.1, blobs: 14, nodes: 26 });
+    const a = new Nebula({ id: info.id, hue: info.hue, label: info.name, status: info.status, energy: 1.1, particles: 340, nodes: 26 });
     a.slot = freeSlot();
     placeAgent(a);
     a.scale = 0;

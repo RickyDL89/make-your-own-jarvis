@@ -408,6 +408,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not cfg.get("OPENROUTER_API_KEY"):
                     self._json(200, {"reply": f"I can't spawn agents without a brain, {title}. Add OPENROUTER_API_KEY to the .env file.", "error": "brain"})
                     return
+                if not wanted.get("demo") and len(wanted["task"].split()) < 2:
+                    reply = AGENTS.missing_task_reply(wanted["role"], title)  # "spawn a researcher" with no task
+                    log(f"EDI:    {reply}  (agents)")
+                    self._json(200, {"reply": reply, "skill": "agents"})
+                    return
                 spawned = AGENTS.demo(cfg) if wanted.get("demo") else [AGENTS.spawn(cfg, wanted["role"], wanted["task"])]
                 reply = AGENTS.acknowledgement(spawned, title)
                 log(f"EDI:    {reply}  (agents)")

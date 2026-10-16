@@ -655,7 +655,10 @@ ABILITIES = (
     "open apps, files, folders and websites on their computer (\"open Excel\", \"open my downloads folder\"); "
     "remember facts across restarts (\"remember that...\", \"what do you remember\", \"forget...\"); "
     "report live weather and forecasts; give live exchange rates; search the web and the news for current information; "
-    "read their Outlook calendar and unread inbox; and spawn agents that work on a task and report back "
-    "(\"spawn a research agent to...\"). "
+    "and read their Outlook calendar and unread inbox. "
+    "Agents: the system spawns a helper agent when the user says something like \"spawn a research agent to ...\" "
+    "or \"get a researcher to ...\", and you are told when that happens. You cannot spawn one yourself, so never say "
+    "you are spawning or have spawned an agent; if the user seems to want one, tell them to say "
+    "\"get a researcher to\" followed by the task. "
     "Other things on the computer you can't do yet, say so briefly if asked. "
 )
