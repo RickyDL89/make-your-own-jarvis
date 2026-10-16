@@ -20,6 +20,7 @@ from pathlib import Path
 import agents
 import brain
 import skills
+import tasks
 
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
@@ -480,19 +481,38 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"EDI:    {task_reply}  (task)")
                 self._json(200, {"reply": task_reply, "skill": "task"})
                 return
-            # Agents: "spawn a research agent to ..." puts a helper on the HUD that reports back later.
-            wanted = AGENTS.parse(text)
+            # Agents: "spawn a research agent to ..." puts helpers on the HUD that report back later.
+            # Several at once are fine; an operator assignment is a take-over task (Claude Code with tools).
+            wanted = AGENTS.requests(cfg, text) if (brain_kind(cfg) == "claude" or cfg.get("OPENROUTER_API_KEY")) else AGENTS.parse(text)
             if wanted:
                 if brain_kind(cfg) != "claude" and not cfg.get("OPENROUTER_API_KEY"):
                     self._json(200, {"reply": f"I can't spawn agents without a brain, {title}. Add OPENROUTER_API_KEY to the .env file.", "error": "brain"})
                     return
-                if not wanted.get("demo") and len(wanted["task"].split()) < 2:
-                    reply = AGENTS.missing_task_reply(wanted["role"], title)  # "spawn a researcher" with no task
-                    log(f"EDI:    {reply}  (agents)")
-                    self._json(200, {"reply": reply, "skill": "agents"})
-                    return
-                spawned = AGENTS.demo(cfg) if wanted.get("demo") else [AGENTS.spawn(cfg, wanted["role"], wanted["task"])]
-                reply = AGENTS.acknowledgement(spawned, title)
+                if wanted.get("demo"):
+                    spawned = AGENTS.demo(cfg)
+                    reply = AGENTS.acknowledgement(spawned, title)
+                else:
+                    asks = wanted["agents"]
+                    if len(asks) == 1 and len(asks[0]["task"].split()) < 2:
+                        reply = AGENTS.missing_task_reply(asks[0]["role"], title)  # "spawn a researcher" with no task
+                        log(f"EDI:    {reply}  (agents)")
+                        self._json(200, {"reply": reply, "skill": "agents"})
+                        return
+                    spawned, held = [], []
+                    for ask in asks:
+                        if ask["role"] == "operator":
+                            if brain_kind(cfg) != "claude":
+                                held.append(f"the operator needs Claude Code installed")
+                            elif tasks.DANGER_RE.search(ask["task"]):
+                                AGENTS._pending_task = (ask["task"], time.time())
+                                held.append(f"the operator's task sounds destructive, so say confirm to let it go ahead")
+                            else:
+                                spawned.append(AGENTS.spawn_task(cfg, ask["task"]))
+                        else:
+                            spawned.append(AGENTS.spawn(cfg, ask["role"], ask["task"]))
+                    reply = AGENTS.acknowledgement(spawned, title) if spawned else f"Nothing started yet, {title}."
+                    if held:
+                        reply += " One thing, " + "; ".join(held) + "."
                 log(f"EDI:    {reply}  (agents)")
                 self._json(200, {"reply": reply, "skill": "agents", "agents": [a["id"] for a in spawned]})
                 return

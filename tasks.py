@@ -31,6 +31,10 @@ DEFAULT_TOOLS = ",".join([
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)",
     "Bash(dir:*)", "Bash(ls:*)", "Bash(Get-ChildItem:*)", "Bash(python:*)", "Bash(py:*)", "Bash(pip:*)",
     "Bash(node:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(mkdir:*)", "Bash(type:*)", "Bash(cat:*)", "Bash(where:*)",
+    # read-only looking around: disk usage, finding files, system facts
+    "Bash(du:*)", "Bash(df:*)", "Bash(find:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)",
+    "Bash(stat:*)", "Bash(tree:*)", "Bash(tasklist:*)", "Bash(systeminfo:*)", "Bash(wmic:*)", "Bash(fsutil volume:*)",
+    "Bash(powershell -NoProfile -Command Get-:*)", "Bash(powershell -Command Get-:*)", "Bash(powershell Get-:*)",
 ])
 
 

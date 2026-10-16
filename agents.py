@@ -9,6 +9,7 @@ with message packets flying between them.
 from __future__ import annotations
 
 import itertools
+import json
 import re
 import threading
 import time
@@ -51,6 +52,20 @@ ROLE_NOUNS = {"researcher": "research", "analyst": "analyst", "writer": "writer"
 ROLE_NOUN_RE = re.compile(r"^(?:\w+\W+){0,3}?(?:an?\s+|another\s+|the\s+)?(" + "|".join(ROLE_NOUNS) + r")\b\s*(?:to|that|who|which|and|:|,)?\s*(.*?)[.!?]*$", re.I)
 TEST_RE = re.compile(r"^(?:edi,?\s+)?(?:please\s+)?(?:(?:run|do|start)\s+(?:an?\s+|the\s+)?agent\s+(?:test|demo)|"
                      r"(?:test|demo|try(?: out)?|show me)\s+(?:your\s+|the\s+)?agents?(?:\s+system)?)[.!?]*$", re.I)
+
+AGENT_WORD_RE = re.compile(r"\bagents?\b", re.I)
+COMPLEX_RE = re.compile(r"\bagents\b|\b(first|second|third|another|both|two|three|four)\b.*\bagent\b|\bagent\b.*\b(second|third|another|and (?:an?|the) \w+ agent)\b", re.I | re.S)
+PLAN_SYSTEM = (
+    "You turn what a user said to EDI, a voice assistant, into agent assignments. Reply with JSON only, no prose, "
+    'no code fences, exactly in this shape: {"agents": [{"role": "...", "task": "..."}]}. '
+    "Roles: research, analyst, writer, coder, planner, weather, travel, scout, operator, general. Use operator only for "
+    "work that must be done on the user's own computer (files, folders, disk space, installed programs, running "
+    "commands); everything that can be answered by looking things up or thinking is not operator. Each task is one "
+    "complete instruction in plain English, written for that agent, with speech-recognition slips corrected (for "
+    "example 'Shesperian' means Shakespearean, 'scat agent' means scout agent). Keep any style the user asked for, "
+    "such as answering in a particular language. If the user is not asking for agents at all, reply {\"agents\": []}."
+)
+PLAN_ROLES = set(ROLES) | {"general"}
 
 DEMO_TASKS = [
     ("research", "find out what the weather will be like for the user's plans this weekend"),
@@ -116,6 +131,51 @@ class Runtime:
         if m and not re.search(not_a_request, text[:m.start(1)], re.I):
             return {"role": ROLE_NOUNS[m.group(1).lower()], "task": m.group(2).strip()}
         return None
+
+    def plan(self, cfg: dict, text: str) -> list[dict] | None:
+        """Ask the brain to turn a complicated request into agent assignments. None if it couldn't."""
+        try:
+            raw = self._llm(cfg, [{"role": "system", "content": PLAN_SYSTEM}, {"role": "user", "content": text}])
+        except Exception as err:  # noqa: BLE001 - fall back to the regex parser
+            self._log(f"Agent planner failed: {err!r}")
+            return None
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\s*|\s*```$", "", raw)
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end < 0:
+            return None
+        try:
+            data = json.loads(raw[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+        out = []
+        for item in data.get("agents") or []:
+            if not isinstance(item, dict) or not str(item.get("task", "")).strip():
+                continue
+            role = str(item.get("role", "general")).lower().strip()
+            out.append({"role": None if role not in ROLES else role, "task": " ".join(str(item["task"]).split())[:500]})
+        return out
+
+    def requests(self, cfg: dict, text: str) -> dict | None:
+        """What the user wants: {"demo": True}, or {"agents": [{"role", "task"}, ...]}, or None for plain chat.
+
+        Simple sentences are parsed instantly by the regexes. Anything that mentions several agents, or that the
+        regexes can't make sense of, goes through the brain, which also fixes speech-recognition slips.
+        """
+        quick = self.parse(text)
+        if quick and quick.get("demo"):
+            return quick
+        complex_request = bool(COMPLEX_RE.search(text))
+        if quick and not complex_request:
+            return {"agents": [quick]}
+        if complex_request or AGENT_WORD_RE.search(text):
+            planned = self.plan(cfg, text)
+            if planned:
+                return {"agents": planned}
+            if planned == []:
+                return None  # the brain says this isn't a request for agents
+        return {"agents": [quick]} if quick else None
 
     def missing_task_reply(self, role_word: str | None, you: str) -> str:
         name = ROLES.get((role_word or "").lower(), ("agent", ""))[0].lower()
@@ -222,10 +282,16 @@ class Runtime:
             threading.Thread(target=retire, daemon=True).start()
 
     def acknowledgement(self, agents: list[dict], you: str) -> str:
-        names = " and ".join(a["name"].lower() if a["name"] != "Agent" else "an agent" for a in agents)
-        article = "" if len(agents) > 1 or agents[0]["name"] == "Agent" else ("an " if agents[0]["name"][0] in "AEIOU" else "a ")
-        return f"Spawning {article}{names}, {you}. I'll report back when they're done." if len(agents) > 1 else \
-               f"Spawning {article}{names}, {you}. I'll report back shortly."
+        def label(a: dict) -> str:
+            base = a["name"].lower()
+            base = re.sub(r"\s+\d+$", "", base)  # "researcher 2" -> "researcher"
+            if base == "agent":
+                return "an agent"
+            return ("an " if base[0] in "aeiou" else "a ") + base
+        names = [label(a) for a in agents]
+        listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        return f"Spawning {listed}, {you}. I'll report back when they're done." if len(agents) > 1 else \
+               f"Spawning {listed}, {you}. I'll report back shortly."
 
     # ---- the agent's life
 
