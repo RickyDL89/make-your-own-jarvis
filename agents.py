@@ -110,7 +110,35 @@ class Runtime:
             self._claimed.add(seq)
             if len(self._claimed) > 1000:
                 self._claimed = set(sorted(self._claimed)[-500:])
+            self._unheard().pop(seq, None)
             return True
+
+    # ---- announcements: things EDI says on her own (a timer, a reminder, a scheduled briefing)
+
+    def _unheard(self) -> dict[int, dict]:
+        if not hasattr(self, "_unheard_map"):
+            self._unheard_map: dict[int, dict] = {}
+        cutoff = time.time() - 24 * 3600
+        for seq in [s for s, e in self._unheard_map.items() if e["time"] < cutoff]:
+            self._unheard_map.pop(seq, None)
+        return self._unheard_map
+
+    def announce(self, text: str, label: str = "") -> None:
+        """Say something unprompted. If no HUD is there to claim it, it waits for the next one that arrives."""
+        self._log(f"EDI:    {text}  (announce: {label or 'now'})")
+        with self._lock:
+            self._seq += 1
+            event = {"seq": self._seq, "type": "announce", "time": time.time(), "speak": text, "label": label}
+            self._events.append(event)
+            self._unheard()[self._seq] = event
+
+    def unheard_events(self) -> list[dict]:
+        with self._lock:
+            return [dict(e) for e in self._unheard().values()]
+
+    def unheard_text(self) -> str:
+        with self._lock:
+            return " ".join(f"{e['label'] or 'note'}: {e['speak']}" for e in self._unheard().values())
 
     # ---- what the user said
 

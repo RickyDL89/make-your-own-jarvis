@@ -10,3 +10,4 @@ __pycache__/
 memory.json
 brain_session.json
 tasks.log
+schedules.json

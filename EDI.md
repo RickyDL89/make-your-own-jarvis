@@ -57,6 +57,32 @@ while she is speaking. The setting is remembered next time.
 Protocols in [protocols.json](protocols.json) can run local programs too, with a `"run"` list next to `"open"`:
 `"run": ["outlook.exe"]`.
 
+## Timers, reminders and standing orders
+
+- **"Set a timer for ten minutes."** — "Your timer is up, sir."
+- **"Remind me in twenty minutes to take the bread out."** / **"Remind me at three to call the bank."** /
+  **"Remind me at 7:30 tomorrow to pack the gym bag."**
+- **"Every weekday at seven, give me my briefing."** / **"Every morning, ask what the weather is."** /
+  **"Every Friday at six, take over: back up my repos folder to D:\backups."** / **"Every two hours, remind me to stretch."**
+- **"What's scheduled?"** — she reads the list. **"Cancel the timer."** / **"Cancel all reminders."** / **"Cancel the briefing."**
+
+Simple phrases are understood instantly; anything more involved ("the first Monday of next month at nine...") goes to
+the brain. Jobs live in `schedules.json` and survive restarts. When one comes due she speaks up on the page; if nobody
+is there she keeps it and opens with *"While you were away, sir..."* next time. A job she misses by more than three
+hours (she was off) is skipped until its next turn.
+
+## The briefing
+
+**"Give me my briefing"** (or **"brief me"**): the day and time, today's and tomorrow's weather, the top headlines,
+the rand, your calendar if Outlook is signed in, anything scheduled today, anything that happened while you were away,
+and anything you asked her to remember that might matter. Schedule it with *"every weekday at seven, give me my briefing."*
+
+## Starting with Windows
+
+**"EDI, start with Windows"** registers a logon task that starts her minimised, without opening a browser tab, so she
+is always running for timers, reminders and scheduled jobs. Pin her page in your browser. **"Stop starting with
+Windows"** removes the task. (The task runs [autostart.cmd](autostart.cmd).)
+
 ## Taking over: EDI does things on your computer
 
 - **"EDI, take over: rename the photos in my downloads folder by date."**

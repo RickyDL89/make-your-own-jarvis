@@ -19,6 +19,7 @@ from pathlib import Path
 
 import agents
 import brain
+import scheduler
 import skills
 import tasks
 
@@ -436,10 +437,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 since = None  # first poll: the page only wants the current seq and the active agents
             events, seq = AGENTS.events_since(since) if since is not None else ([], AGENTS.events_since(0)[1])
+            if since is None and query.get("v") == HUD_VERSION:
+                events = AGENTS.unheard_events()  # a page arriving late still gets what it missed
             if query.get("v") != HUD_VERSION:
                 # A page running an older HUD (a tab left open from before a restart) must not speak:
                 # it would talk over the current one. It still gets to draw the agents.
-                events = [{**e, "speak": ""} if e.get("type") == "agent_done" else e for e in events]
+                events = [{**e, "speak": ""} if e.get("type") in ("agent_done", "announce") else e for e in events]
             self._json(200, {"seq": seq, "events": events, "agents": AGENTS.active()})
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
@@ -458,90 +461,7 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._json(400, {"error": "Say something first."})
                 return
-            log(f"You:    {text}")
-            protocol = match_protocol(text)
-            if protocol:
-                for url in protocol.get("open") or []:
-                    open_url(str(url))
-                for target in protocol.get("run") or []:  # local apps and files, see skills.launch
-                    try:
-                        skills.launch(str(target))
-                    except OSError as err:
-                        log(f"Couldn't run {target}: {err}")
-                if protocol.get("voice"):
-                    voice_id = str(protocol["voice"]).strip()
-                    _voice_override = None if voice_id == "default" else voice_id
-                reply = str(protocol.get("reply") or "Right away, {you}.").replace("{you}", title)
-                log(f"EDI:    {reply}  (protocol)")
-                self._json(200, {"reply": reply, "protocol": protocol["say"]})
-                return
-            # Take-over: "EDI, take over: ..." hands the task to Claude Code with tools, shown as the Operator.
-            task_reply = AGENTS.handle_task_phrase(cfg, text, title, available=brain_kind(cfg) == "claude")
-            if task_reply:
-                log(f"EDI:    {task_reply}  (task)")
-                self._json(200, {"reply": task_reply, "skill": "task"})
-                return
-            # Agents: "spawn a research agent to ..." puts helpers on the HUD that report back later.
-            # Several at once are fine; an operator assignment is a take-over task (Claude Code with tools).
-            wanted = AGENTS.requests(cfg, text) if (brain_kind(cfg) == "claude" or cfg.get("OPENROUTER_API_KEY")) else AGENTS.parse(text)
-            if wanted:
-                if brain_kind(cfg) != "claude" and not cfg.get("OPENROUTER_API_KEY"):
-                    self._json(200, {"reply": f"I can't spawn agents without a brain, {title}. Add OPENROUTER_API_KEY to the .env file.", "error": "brain"})
-                    return
-                if wanted.get("demo"):
-                    spawned = AGENTS.demo(cfg)
-                    reply = AGENTS.acknowledgement(spawned, title)
-                else:
-                    asks = wanted["agents"]
-                    if len(asks) == 1 and len(asks[0]["task"].split()) < 2:
-                        reply = AGENTS.missing_task_reply(asks[0]["role"], title)  # "spawn a researcher" with no task
-                        log(f"EDI:    {reply}  (agents)")
-                        self._json(200, {"reply": reply, "skill": "agents"})
-                        return
-                    spawned, held = [], []
-                    for ask in asks:
-                        if ask["role"] == "operator":
-                            if brain_kind(cfg) != "claude":
-                                held.append(f"the operator needs Claude Code installed")
-                            elif tasks.DANGER_RE.search(ask["task"]):
-                                AGENTS._pending_task = (ask["task"], time.time())
-                                held.append(f"the operator's task sounds destructive, so say confirm to let it go ahead")
-                            else:
-                                spawned.append(AGENTS.spawn_task(cfg, ask["task"]))
-                        else:
-                            spawned.append(AGENTS.spawn(cfg, ask["role"], ask["task"]))
-                    reply = AGENTS.acknowledgement(spawned, title) if spawned else f"Nothing started yet, {title}."
-                    if held:
-                        reply += " One thing, " + "; ".join(held) + "."
-                log(f"EDI:    {reply}  (agents)")
-                self._json(200, {"reply": reply, "skill": "agents", "agents": [a["id"] for a in spawned]})
-                return
-            # Skills: things EDI does herself (open an app, remember a fact) answer right away.
-            # Things that need live data (weather, search, Outlook) fetch it, then let the brain answer.
-            skill = skills.handle(cfg, text)
-            if skill and skill.reply:
-                log(f"EDI:    {skill.reply}  ({skill.name})")
-                self._json(200, {"reply": skill.reply, "skill": skill.name})
-                return
-            if brain_kind(cfg) != "claude" and not cfg.get("OPENROUTER_API_KEY"):
-                self._json(200, {"reply": f"My brain isn't connected yet, {title}. Install Claude Code, or add OPENROUTER_API_KEY to the .env file, and restart me.", "error": "brain"})
-                return
-            try:
-                reply = think(cfg, text, skill.context if skill else None)
-            except OpenRouterError as err:
-                log(f"OpenRouter error {err}")
-                self._json(200, {"reply": brain_error(err, cfg), "error": "brain"})
-                return
-            except brain.BrainError as err:
-                log(f"Claude error: {err}")
-                self._json(200, {"reply": f"My brain isn't answering, {title}. {err}", "error": "brain"})
-                return
-            except Exception as err:  # noqa: BLE001 - keep EDI alive and report it
-                log(f"Unexpected error: {err!r}")
-                self._json(200, {"reply": f"Something went wrong in my head, {title}. The details are in the EDI window.", "error": "internal"})
-                return
-            log(f"EDI:    {reply}" + (f"  ({skill.name})" if skill else ""))
-            self._json(200, {"reply": reply, **({"skill": skill.name} if skill else {})})
+            self._json(200, respond(cfg, text))
             return
 
         if path == "/api/tts":
@@ -575,6 +495,127 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._json(404, {"error": "not found"})
+
+
+def respond(cfg: dict[str, str], text: str) -> dict:
+    """Everything EDI does with a sentence, in order: protocols, scheduling, take-over, agents, skills, then the brain.
+
+    Used by the HUD's /api/chat and by the scheduler when a job comes due. Returns the JSON the HUD expects.
+    """
+    global _voice_override
+    title = cfg["JARVIS_CALLS_YOU"]
+    log(f"You:    {text}")
+    protocol = match_protocol(text)
+    if protocol:
+        for url in protocol.get("open") or []:
+            open_url(str(url))
+        for target in protocol.get("run") or []:  # local apps and files, see skills.launch
+            try:
+                skills.launch(str(target))
+            except OSError as err:
+                log(f"Couldn't run {target}: {err}")
+        if protocol.get("voice"):
+            voice_id = str(protocol["voice"]).strip()
+            _voice_override = None if voice_id == "default" else voice_id
+        reply = str(protocol.get("reply") or "Right away, {you}.").replace("{you}", title)
+        log(f"EDI:    {reply}  (protocol)")
+        return {"reply": reply, "protocol": protocol["say"]}
+    has_brain = brain_kind(cfg) == "claude" or bool(cfg.get("OPENROUTER_API_KEY"))
+    # Scheduling first, so "every weekday at seven, give me my briefing" becomes a job rather than a briefing now.
+    scheduled = SCHEDULER.handle(cfg, text, title, has_brain=has_brain)
+    if scheduled:
+        log(f"EDI:    {scheduled}  (schedule)")
+        return {"reply": scheduled, "skill": "schedule"}
+    # The briefing: weather, headlines, the rand, today's schedule, in one go.
+    if scheduler.BRIEFING_RE.search(text):
+        if not has_brain:
+            return {"reply": f"The briefing needs a brain, {title}. Install Claude Code or add an OpenRouter key.", "error": "brain"}
+        try:
+            reply = briefing(cfg)
+        except Exception as err:  # noqa: BLE001 - keep EDI alive and report it
+            log(f"Briefing failed: {err!r}")
+            return {"reply": f"I couldn't put the briefing together, {title}. The reason is in the EDI window.", "error": "internal"}
+        log(f"EDI:    {reply}  (briefing)")
+        return {"reply": reply, "skill": "briefing"}
+    # Take-over: "EDI, take over: ..." hands the task to Claude Code with tools, shown as the Operator.
+    task_reply = AGENTS.handle_task_phrase(cfg, text, title, available=brain_kind(cfg) == "claude")
+    if task_reply:
+        log(f"EDI:    {task_reply}  (task)")
+        return {"reply": task_reply, "skill": "task"}
+    # Agents: "spawn a research agent to ..." puts helpers on the HUD that report back later.
+    # Several at once are fine; an operator assignment is a take-over task (Claude Code with tools).
+    wanted = AGENTS.requests(cfg, text) if has_brain else AGENTS.parse(text)
+    if wanted:
+        if not has_brain:
+            return {"reply": f"I can't spawn agents without a brain, {title}. Add OPENROUTER_API_KEY to the .env file.", "error": "brain"}
+        if wanted.get("demo"):
+            spawned = AGENTS.demo(cfg)
+            reply = AGENTS.acknowledgement(spawned, title)
+        else:
+            asks = wanted["agents"]
+            if len(asks) == 1 and len(asks[0]["task"].split()) < 2:
+                reply = AGENTS.missing_task_reply(asks[0]["role"], title)  # "spawn a researcher" with no task
+                log(f"EDI:    {reply}  (agents)")
+                return {"reply": reply, "skill": "agents"}
+            spawned, held = [], []
+            for ask in asks:
+                if ask["role"] == "operator":
+                    if brain_kind(cfg) != "claude":
+                        held.append("the operator needs Claude Code installed")
+                    elif tasks.DANGER_RE.search(ask["task"]):
+                        AGENTS._pending_task = (ask["task"], time.time())
+                        held.append("the operator's task sounds destructive, so say confirm to let it go ahead")
+                    else:
+                        spawned.append(AGENTS.spawn_task(cfg, ask["task"]))
+                else:
+                    spawned.append(AGENTS.spawn(cfg, ask["role"], ask["task"]))
+            reply = AGENTS.acknowledgement(spawned, title) if spawned else f"Nothing started yet, {title}."
+            if held:
+                reply += " One thing, " + "; ".join(held) + "."
+        log(f"EDI:    {reply}  (agents)")
+        return {"reply": reply, "skill": "agents", "agents": [a["id"] for a in spawned]}
+    # Skills: things EDI does herself (open an app, remember a fact) answer right away.
+    # Things that need live data (weather, search, Outlook) fetch it, then let the brain answer.
+    skill = skills.handle(cfg, text)
+    if skill and skill.reply:
+        log(f"EDI:    {skill.reply}  ({skill.name})")
+        return {"reply": skill.reply, "skill": skill.name}
+    if not has_brain:
+        return {"reply": f"My brain isn't connected yet, {title}. Install Claude Code, or add OPENROUTER_API_KEY to the .env file, and restart me.", "error": "brain"}
+    try:
+        reply = think(cfg, text, skill.context if skill else None)
+    except OpenRouterError as err:
+        log(f"OpenRouter error {err}")
+        return {"reply": brain_error(err, cfg), "error": "brain"}
+    except brain.BrainError as err:
+        log(f"Claude error: {err}")
+        return {"reply": f"My brain isn't answering, {title}. {err}", "error": "brain"}
+    except Exception as err:  # noqa: BLE001 - keep EDI alive and report it
+        log(f"Unexpected error: {err!r}")
+        return {"reply": f"Something went wrong in my head, {title}. The details are in the EDI window.", "error": "internal"}
+    log(f"EDI:    {reply}" + (f"  ({skill.name})" if skill else ""))
+    return {"reply": reply, **({"skill": skill.name} if skill else {})}
+
+
+def briefing(cfg: dict[str, str]) -> str:
+    """The morning briefing: live facts gathered by skills, told by EDI in her own words."""
+    facts = skills.briefing_context(cfg)
+    facts += " " + SCHEDULER.today_summary()
+    missed = AGENTS.unheard_text()
+    if missed:
+        facts += " Things that happened while the user was away: " + missed
+    return think(cfg, "Give me my briefing.",
+                 context=("The user asked for their briefing. Facts gathered just now: " + facts +
+                          " Deliver it as a spoken briefing of four to seven sentences: greet them with the day, then "
+                          "weather, the main headlines, the rand, anything scheduled today, anything that happened while "
+                          "they were away, and one short closing line. Plain spoken English, no lists."),
+                 remember=True)
+
+
+SCHEDULER = scheduler.Scheduler(respond=lambda cfg, text: respond(cfg, text).get("reply", ""),
+                                announce=lambda text, label: AGENTS.announce(text, label), log=log,
+                                settings=load_settings)
+SCHEDULER.set_planner(llm)  # complicated phrases ("the first Monday of next month at nine...") go to the brain
 
 
 class Server(ThreadingHTTPServer):
@@ -628,6 +669,9 @@ def main() -> None:
     print("  ==================================================\n")
     if kind == "claude":
         threading.Thread(target=lambda: claude_session(cfg).warm(), daemon=True).start()  # so the first reply is quick
+    SCHEDULER.start()
+    if SCHEDULER.jobs:
+        print(f"    Scheduled: {len(SCHEDULER.jobs)} job(s), next: {SCHEDULER.next_summary()}")
     if not NO_BROWSER:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:

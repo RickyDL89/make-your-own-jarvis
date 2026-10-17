@@ -798,6 +798,11 @@ void main() {
   }
   function handleEvent(ev) {
     if (ev.type === 'agent_spawn') { ensureAgent(ev.agent); return; }
+    if (ev.type === 'announce') {
+      // a timer, a reminder, a scheduled briefing: EDI speaking up on her own
+      if (ev.speak) { announce(ev.speak, ev.seq); edi.pulse = 1; }
+      return;
+    }
     const a = agentsById.get(ev.id);
     if (ev.type === 'message') {
       const fromEdi = ev.from === 'EDI';
@@ -856,8 +861,9 @@ void main() {
     recentlySaid.set(text, now);
     return false;
   }
+  let awake = false;  // the browser only plays audio after the first click, so announcements wait for it
   function drainAnnouncements() {
-    if (busy || state !== 'idle' || !announcements.length) return;
+    if (!awake || busy || state !== 'idle' || !announcements.length) return;
     const { text, speakIt } = announcements.shift();
     showExchange('', text);
     if (speakIt && !saidRecently(text)) speak(text);
@@ -867,8 +873,14 @@ void main() {
   async function pollEvents() {
     try {
       const r = await (await fetch('/api/events?v=3' + (eventSeq === null ? '' : '&since=' + eventSeq))).json();
-      if (eventSeq === null) (r.agents || []).forEach(ensureAgent);
-      else for (const ev of r.events) handleEvent(ev);
+      if (eventSeq === null) {
+        (r.agents || []).forEach(ensureAgent);
+        // things she wanted to say while nobody was here
+        const missed = (r.events || []).filter((ev) => ev.type === 'announce' && ev.speak);
+        missed.forEach((ev, i) => announce((i === 0 && missed.length ? `While you were away, ${calls}. ` : '') + ev.speak, ev.seq));
+      } else {
+        for (const ev of r.events) handleEvent(ev);
+      }
       eventSeq = r.seq;
     } catch {}
     setTimeout(pollEvents, 600);
@@ -1164,6 +1176,7 @@ void main() {
 
   $('wake').addEventListener('click', () => {
     $('wake').remove();
+    awake = true;
     initAudio();
     const hour = new Date().getHours();
     const part = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';

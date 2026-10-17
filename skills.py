@@ -618,6 +618,76 @@ def outlook_skill(text: str, you: str) -> Result | None:
                   + " Summarise it the way a good assistant would, briefly, mentioning what matters most.")
 
 
+# ---------------------------------------------------------------- the briefing
+
+def briefing_context(cfg: dict[str, str]) -> str:
+    """Everything the morning briefing is built from, fetched live. Each part fails on its own."""
+    you = cfg["JARVIS_CALLS_YOU"]
+    parts = [f"It is {time.strftime('%A, %B %d, %Y, %I:%M %p')}."]
+    for name, fetch in (
+        ("weather", lambda: weather_skill(cfg, "what's the weather today and tomorrow", you)),
+        ("rand", lambda: fx_skill("rand dollar exchange rate", you)),
+        ("news", lambda: search_skill(cfg, "latest news in South Africa today", you)),
+        ("calendar", lambda: outlook_skill("what's on my calendar today", you) if outlook_signed_in() else None),
+    ):
+        try:
+            result = fetch()
+            if result and result.context:
+                parts.append(result.context)
+            elif result and result.reply and name == "calendar":
+                pass  # not signed in: leave the calendar out rather than apologise every morning
+        except Exception as err:  # noqa: BLE001 - one missing piece must not sink the briefing
+            log(f"Briefing: {name} failed: {err!r}")
+    facts = load_memory()["facts"]
+    if facts:
+        parts.append("Things the user asked you to remember, in case any are relevant today: " + "; ".join(str(f) for f in facts[-10:]) + ".")
+    return " ".join(parts)
+
+
+# ---------------------------------------------------------------- start with Windows
+
+AUTOSTART_ON_RE = re.compile(r"\b(start|run|launch|open)\s+(?:yourself\s+)?(?:automatically\s+)?(?:with|at|on)\s+(?:windows|start-?up|log-?on|login|boot)\b|\bautostart\b|\balways on\b", re.I)
+AUTOSTART_OFF_RE = re.compile(r"\b(stop|don'?t|do not|no longer|remove|disable)\b.*\b(start|run|launch)\w*\s+(?:yourself\s+)?(?:with|at|on)\s+(?:windows|start-?up|log-?on|login|boot)\b|\bremove (?:yourself )?from start-?up\b", re.I)
+TASK_NAME = "EDI"
+
+
+def autostart_skill(text: str, you: str) -> Result | None:
+    on, off = bool(AUTOSTART_ON_RE.search(text)), bool(AUTOSTART_OFF_RE.search(text))
+    if not (on or off):
+        return None
+    if os.name != "nt":
+        return Result("autostart", reply=f"Starting with the system is only wired up for Windows, {you}.")
+    startup_link = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup" / "EDI.cmd"
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if off:
+        removed = False
+        proc = subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True, creationflags=flags)  # noqa: S603
+        removed = proc.returncode == 0
+        if startup_link.exists():
+            startup_link.unlink()
+            removed = True
+        if removed:
+            return Result("autostart", reply=f"Done, {you}. I won't start with Windows any more.")
+        return Result("autostart", reply=f"I wasn't set to start with Windows, {you}.")
+    launcher = ROOT / "autostart.cmd"
+    # Task Scheduler first (starts even before you open anything); the Startup folder if Windows refuses,
+    # which needs no permissions at all.
+    proc = subprocess.run(["schtasks", "/Create", "/F", "/SC", "ONLOGON", "/TN", TASK_NAME, "/TR", f'"{launcher}"', "/RL", "LIMITED"],  # noqa: S603
+                          capture_output=True, text=True, creationflags=flags)
+    if proc.returncode == 0:
+        log(f"Autostart: scheduled task '{TASK_NAME}' -> {launcher}")
+        return Result("autostart", reply=f"Done, {you}. I'll start with Windows from now on, minimised. Pin my page in your browser and I'm always a tab away.")
+    log(f"Autostart: Task Scheduler refused ({(proc.stderr or proc.stdout).strip()[:160]}); using the Startup folder instead")
+    try:
+        startup_link.parent.mkdir(parents=True, exist_ok=True)
+        startup_link.write_text(f'@echo off\r\nstart "" /min "{launcher}"\r\n', encoding="utf-8")
+    except OSError as err:
+        log(f"Autostart failed: {err}")
+        return Result("autostart", reply=f"Windows wouldn't let me register the start-up task, {you}. The reason is in the EDI window.")
+    log(f"Autostart: {startup_link}")
+    return Result("autostart", reply=f"Done, {you}. I'll start with Windows from now on, minimised, from your Startup folder. Pin my page in your browser and I'm always a tab away.")
+
+
 # ---------------------------------------------------------------- dispatcher
 
 def live_context(cfg: dict[str, str], text: str) -> str | None:
@@ -635,6 +705,7 @@ def handle(cfg: dict[str, str], text: str) -> Result | None:
     """Decide whether EDI can do something with what was said. None means: just chat."""
     you = cfg["JARVIS_CALLS_YOU"]
     for skill in (lambda t, y: memory_skill(t, y),
+                  lambda t, y: autostart_skill(t, y),
                   lambda t, y: launcher_skill(t, y),
                   lambda t, y: weather_skill(cfg, t, y),
                   lambda t, y: fx_skill(t, y),
@@ -660,6 +731,10 @@ ABILITIES = (
     "or \"get a researcher to ...\", and you are told when that happens. You cannot spawn one yourself, so never say "
     "you are spawning or have spawned an agent; if the user seems to want one, tell them to say "
     "\"get a researcher to\" followed by the task. "
+    "Scheduling: timers (\"set a timer for ten minutes\"), reminders (\"remind me at three to call the bank\"), standing "
+    "orders (\"every weekday at seven, give me my briefing\"), \"what's scheduled\" and \"cancel the timer\" are handled by "
+    "the system; the morning briefing (\"give me my briefing\") gathers weather, headlines, the rand and the day's schedule; "
+    "\"start with Windows\" makes you start at logon. "
     "Taking over: when the user says \"take over:\" followed by a task, the system hands it to Claude Code, which "
     "can read, write and edit files, search, and run allowed programs on this computer, and you are told the result. "
     "You cannot start that yourself either; if the user wants something done on the computer, tell them to say "
