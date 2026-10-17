@@ -541,7 +541,7 @@ def google_skill(cfg: dict[str, str], text: str, you: str) -> Result | None:
     try:
         if wants_cal and have_cal:
             start, end, when = _calendar_window(text)
-            events = google.calendar_events(cfg, start, end)
+            events = google.calendar_events(cfg, start, end, fresh=bool(FRESH_RE.search(text)))
             if NEXT_MEETING_RE.search(text):
                 upcoming = [e for e in events if e["end"] > datetime.now()][:3]
                 parts.append(google.describe_events(upcoming, "the rest of today") if upcoming else "Nothing more is on the user's calendar today.")
@@ -571,7 +571,12 @@ def google_skill(cfg: dict[str, str], text: str, you: str) -> Result | None:
 
 # ---------------------------------------------------------------- Outlook (classic Outlook on Windows, via COM)
 
-CALENDAR_RE = re.compile(r"\b(calendar|schedule|meetings?|appointments?|agenda|what(?:'s| is| do i have) on (?:today|tomorrow|this week|my plate)|my day|free (?:today|tomorrow|this afternoon))\b", re.I)
+CALENDAR_RE = re.compile(
+    r"\b(calendar|schedule|meetings?|appointments?|agenda|"
+    r"what(?:'s| is| do i have|'ve i got| have i got)\s+(?:on|planned|happening|scheduled|lined up|coming up)(?:\s+for)?\s+(?:today|tomorrow|tonight|this (?:week|morning|afternoon|evening|weekend)|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|my plate)|"
+    r"anything (?:on|planned|happening|scheduled)(?:\s+for)?\s+(?:today|tomorrow|tonight|this week|the weekend)|"
+    r"(?:how does|what does|how's) my (?:day|week) look|my day|free (?:today|tomorrow|this afternoon|tonight))\b", re.I)
+FRESH_RE = re.compile(r"\b(again|re-?check|refresh|double[- ]check|look again|just added|just put|just created|re-?load)\b", re.I)
 MAIL_RE = re.compile(r"\b(e-?mails?|inbox|unread|mail|messages)\b", re.I)
 
 OUTLOOK_SCRIPT = r"""

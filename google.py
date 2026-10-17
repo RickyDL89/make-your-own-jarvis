@@ -226,11 +226,13 @@ def expand(events: list[dict], window_start: datetime, window_end: datetime) -> 
     return out
 
 
-def calendar_events(cfg: dict[str, str], window_start: datetime, window_end: datetime) -> list[dict]:
+def calendar_events(cfg: dict[str, str], window_start: datetime, window_end: datetime, fresh: bool = False) -> list[dict]:
+    """Occurrences in the window across all configured calendars. `fresh` skips the short cache
+    ("check again"); note Google's own export can lag a few minutes behind the live calendar."""
     local_tz = datetime.now().astimezone().tzinfo
     found: list[dict] = []
     for url in [u.strip() for u in cfg.get("GOOGLE_CALENDAR_ICS", "").split(",") if u.strip()]:
-        name, events = parse_ics(_fetch(url), local_tz)
+        name, events = parse_ics(_fetch(url, ttl=0 if fresh else 90), local_tz)
         for occ in expand(events, window_start, window_end):
             occ["calendar"] = name
             found.append(occ)

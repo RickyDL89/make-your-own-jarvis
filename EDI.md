@@ -163,7 +163,8 @@ She also picks the conversation up where it left off after a restart.
 
 - `GOOGLE_CALENDAR_ICS` — Google Calendar → Settings → your calendar → *Secret address in iCal format*. Several
   calendars: comma-separated. She reads the feed herself (recurring events, exceptions and moved instances included),
-  refreshed every five minutes.
+  refreshed every ninety seconds; *"check my calendar again"* forces a refresh. Google's own export lags a few minutes
+  behind the live calendar, so something you added a moment ago may take a little while to show.
 - `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` — Google Account → Security → 2-Step Verification → *App passwords*,
   create one for EDI. She reads Gmail's unread-inbox feed: count, sender, subject and the first line, nothing else.
 
