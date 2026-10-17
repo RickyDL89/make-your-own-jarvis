@@ -25,6 +25,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -491,6 +492,77 @@ def fx_skill(text: str, you: str) -> Result | None:
                   "Do not invert it, do not use currency codes.")
 
 
+# ---------------------------------------------------------------- Google: calendar (.ics) and Gmail (Atom feed)
+
+import google  # noqa: E402 - local module, kept next to the skill that uses it
+
+NEXT_MEETING_RE = re.compile(r"\b(next (?:meeting|appointment|event|thing)|what(?:'s| is) next (?:on my calendar|today|up)|when(?:'s| is) my next)\b", re.I)
+FREE_RE = re.compile(r"\b(am i free|do i have (?:anything|something) on|is my (?:morning|afternoon|evening|day) free|any (?:gaps|free time))\b", re.I)
+MAIL_FROM_RE = re.compile(r"\b(?:anything|any ?thing|mail|e-?mails?|messages?|news|heard|word)\s+from\s+([A-Za-z][\w.'-]*(?:\s+[A-Z][\w.'-]*)?)", re.I)
+LATEST_MAIL_RE = re.compile(r"\b(latest|last|newest|most recent|top)\s+(?:e-?mail|message|mail)\b|\bread (?:me )?(?:my|the) (?:latest|last|newest) (?:e-?mail|message)", re.I)
+
+
+def _calendar_window(text: str) -> tuple[datetime, datetime, str]:
+    now = datetime.now()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    lowered = text.lower()
+    if "tomorrow" in lowered:
+        return today + timedelta(days=1), today + timedelta(days=2), "tomorrow"
+    if "this week" in lowered or "the week" in lowered or "next 7 days" in lowered or "next seven days" in lowered:
+        return now, today + timedelta(days=7), "the next seven days"
+    if "next week" in lowered:
+        start = today + timedelta(days=7 - today.weekday())
+        return start, start + timedelta(days=7), "next week"
+    if "weekend" in lowered:
+        start = today + timedelta(days=(5 - today.weekday()) % 7)
+        return start, start + timedelta(days=2), "the weekend"
+    for name, idx in (("monday", 0), ("tuesday", 1), ("wednesday", 2), ("thursday", 3), ("friday", 4), ("saturday", 5), ("sunday", 6)):
+        if name in lowered:
+            start = today + timedelta(days=(idx - today.weekday()) % 7 or (0 if idx == today.weekday() and "next" not in lowered else 7))
+            return start, start + timedelta(days=1), name.capitalize()
+    if "afternoon" in lowered:
+        return today.replace(hour=12), today.replace(hour=18), "this afternoon"
+    if "evening" in lowered or "tonight" in lowered:
+        return today.replace(hour=17), today + timedelta(days=1), "this evening"
+    if "morning" in lowered:
+        return today, today.replace(hour=12), "this morning"
+    return now if NEXT_MEETING_RE.search(text) else today, today + timedelta(days=1), "today"
+
+
+def google_skill(cfg: dict[str, str], text: str, you: str) -> Result | None:
+    wants_cal = bool(CALENDAR_RE.search(text) or NEXT_MEETING_RE.search(text) or FREE_RE.search(text))
+    wants_mail = bool(MAIL_RE.search(text) or LATEST_MAIL_RE.search(text) or MAIL_FROM_RE.search(text))
+    if not (wants_cal or wants_mail):
+        return None
+    have_cal, have_mail = google.configured_calendar(cfg), google.configured_mail(cfg)
+    if not ((wants_cal and have_cal) or (wants_mail and have_mail)):
+        return None  # not set up: let the Outlook skill have a go, or say what's missing
+    parts = []
+    try:
+        if wants_cal and have_cal:
+            start, end, when = _calendar_window(text)
+            events = google.calendar_events(cfg, start, end)
+            if NEXT_MEETING_RE.search(text):
+                upcoming = [e for e in events if e["end"] > datetime.now()][:3]
+                parts.append(google.describe_events(upcoming, "the rest of today") if upcoming else "Nothing more is on the user's calendar today.")
+            else:
+                parts.append(google.describe_events(events, when))
+        if wants_mail and have_mail:
+            feed = google.gmail_unread(cfg)
+            m = MAIL_FROM_RE.search(text)
+            parts.append(google.describe_mail(feed, m.group(1).strip() if m else ""))
+    except urllib.error.HTTPError as err:
+        log(f"Google: HTTP {err.code} {err.reason}")
+        if err.code in (401, 403):
+            return Result("google", reply=f"Google turned me away, {you}. Check GMAIL_ADDRESS and GMAIL_APP_PASSWORD in the .env file, or the calendar address.")
+        return Result("google", reply=f"Google isn't answering right now, {you}.")
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as err:
+        log(f"Google: {err!r}")
+        return Result("google", reply=f"I couldn't reach Google just now, {you}.")
+    return Result("google", context="Live data from the user's Google account. " + " ".join(parts)
+                  + " Answer the question from this, briefly and naturally, in local time, without reading out brackets or calendar names unless asked.")
+
+
 # ---------------------------------------------------------------- Outlook (classic Outlook on Windows, via COM)
 
 CALENDAR_RE = re.compile(r"\b(calendar|schedule|meetings?|appointments?|agenda|what(?:'s| is| do i have) on (?:today|tomorrow|this week|my plate)|my day|free (?:today|tomorrow|this afternoon))\b", re.I)
@@ -597,7 +669,7 @@ def outlook_skill(text: str, you: str) -> Result | None:
     if data.get("error"):
         log(f"Outlook: {data['error']}")
         if data.get("hint"):
-            return Result("outlook", reply=f"I can't see your mail yet, {you}. {data['hint']}")
+            return Result("outlook", reply=f"I can't see your calendar or mail yet, {you}. Put your Google Calendar's secret address and a Gmail app password in the .env file, or sign in to classic Outlook, and I can.")
         return Result("outlook", reply=f"I couldn't reach Outlook, {you}. The reason is in the EDI window.")
     parts = []
     if "calendar" in data:
@@ -628,7 +700,9 @@ def briefing_context(cfg: dict[str, str]) -> str:
         ("weather", lambda: weather_skill(cfg, "what's the weather today and tomorrow", you)),
         ("rand", lambda: fx_skill("rand dollar exchange rate", you)),
         ("news", lambda: search_skill(cfg, "latest news in South Africa today", you)),
-        ("calendar", lambda: outlook_skill("what's on my calendar today", you) if outlook_signed_in() else None),
+        ("calendar", lambda: google_skill(cfg, "what's on my calendar today", you) if google.configured_calendar(cfg)
+         else outlook_skill("what's on my calendar today", you) if outlook_signed_in() else None),
+        ("mail", lambda: google_skill(cfg, "any unread mail", you) if google.configured_mail(cfg) else None),
     ):
         try:
             result = fetch()
@@ -693,7 +767,7 @@ def autostart_skill(text: str, you: str) -> Result | None:
 def live_context(cfg: dict[str, str], text: str) -> str | None:
     """Only the look-things-up skills, for agents: never opens apps or touches memory."""
     you = cfg["JARVIS_CALLS_YOU"]
-    for skill in (lambda t: weather_skill(cfg, t, you), lambda t: fx_skill(t, you),
+    for skill in (lambda t: weather_skill(cfg, t, you), lambda t: fx_skill(t, you), lambda t: google_skill(cfg, t, you),
                   lambda t: outlook_skill(t, you), lambda t: search_skill(cfg, t, you)):
         result = skill(text)
         if result:
@@ -709,6 +783,7 @@ def handle(cfg: dict[str, str], text: str) -> Result | None:
                   lambda t, y: launcher_skill(t, y),
                   lambda t, y: weather_skill(cfg, t, y),
                   lambda t, y: fx_skill(t, y),
+                  lambda t, y: google_skill(cfg, t, y),
                   lambda t, y: outlook_skill(t, y),
                   lambda t, y: search_skill(cfg, t, y)):
         try:
@@ -726,7 +801,7 @@ ABILITIES = (
     "open apps, files, folders and websites on their computer (\"open Excel\", \"open my downloads folder\"); "
     "remember facts across restarts (\"remember that...\", \"what do you remember\", \"forget...\"); "
     "report live weather and forecasts; give live exchange rates; search the web and the news for current information; "
-    "and read their Outlook calendar and unread inbox. "
+    "and read their calendar and unread inbox (Google Calendar and Gmail when set up, otherwise classic Outlook). "
     "Agents: the system spawns a helper agent when the user says something like \"spawn a research agent to ...\" "
     "or \"get a researcher to ...\", and you are told when that happens. You cannot spawn one yourself, so never say "
     "you are spawning or have spawned an agent; if the user seems to want one, tell them to say "

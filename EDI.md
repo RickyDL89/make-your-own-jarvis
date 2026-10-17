@@ -153,14 +153,24 @@ She also picks the conversation up where it left off after a restart.
 - **Real web search (optional):** get a free key at <https://brave.com/search/api> (2,000 searches a month),
   put it in `.env` as `BRAVE_API_KEY=...`, restart her, and "search for the best pizza in Johannesburg" gets proper results.
 
-## Outlook calendar and inbox
+## Calendar and mail
 
-- **"What's on my calendar today?"**, "Any meetings tomorrow?", "What's my schedule this week?"
-- **"Do I have unread emails?"**, "What's in my inbox?"
+- **"What's on my calendar today?"**, "Anything tomorrow?", "What's my schedule this week?", "What's on Friday?",
+  "When's my next meeting?", "Am I free this afternoon?"
+- **"Any new mail?"**, "What's in my inbox?", "Anything from Thandi?", "What's my latest email about?"
 
-This reads classic Outlook through Windows automation, so classic Outlook has to be signed in to your account.
-If you only use the new Outlook app, she says so instead of guessing. Open classic Outlook once, add your account,
-and it starts working.
+**Google (recommended, read-only, no sign-in flow).** Two values in `.env`:
+
+- `GOOGLE_CALENDAR_ICS` — Google Calendar → Settings → your calendar → *Secret address in iCal format*. Several
+  calendars: comma-separated. She reads the feed herself (recurring events, exceptions and moved instances included),
+  refreshed every five minutes.
+- `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` — Google Account → Security → 2-Step Verification → *App passwords*,
+  create one for EDI. She reads Gmail's unread-inbox feed: count, sender, subject and the first line, nothing else.
+
+Restart her after adding them; the briefing picks both up automatically.
+
+**Classic Outlook** is the fallback when Google isn't set up: it is read through Windows automation and needs classic
+Outlook signed in to your account (the new Outlook app has no such interface, and she says so instead of guessing).
 
 ## The brain
 

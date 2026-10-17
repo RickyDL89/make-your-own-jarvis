@@ -44,6 +44,9 @@ DEFAULTS = {
     "CLAUDE_AGENT_MODEL": "claude-opus-5-5",  # the model agents and tasks think with, where quality matters more than speed
     "JARVIS_CALLS_YOU": "sir",
     "EDI_LOCATION": "",  # your city, for the weather. Empty means: work it out from the connection
+    "GOOGLE_CALENDAR_ICS": "",  # your calendar's secret iCal address (several: comma-separated)
+    "GMAIL_ADDRESS": "",  # with GMAIL_APP_PASSWORD, for the unread inbox
+    "GMAIL_APP_PASSWORD": "",
     "BRAVE_API_KEY": "",  # optional, for real web search. Free at https://brave.com/search/api
     "PORT": "8765",
 }
