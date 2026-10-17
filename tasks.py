@@ -26,6 +26,8 @@ CANCEL_RE = re.compile(r"^(?:edi,?\s+)?(?:no,?\s+)?(?:cancel|stop|never ?mind|ab
 DANGER_RE = re.compile(r"\b(delete|remove|rm|erase|wipe|format|uninstall|kill|shut ?down|reboot|restart the (?:pc|computer|machine)|"
                        r"reset|purge|drop|truncate|overwrite|empty the (?:trash|recycle|bin)|clear (?:all|everything)|move all)\b", re.I)
 
+TASK_MENTIONS_SCREEN_RE = re.compile(r"\b(screen|window|dialog|popup|this error|that error|what you see|what i'm looking at|on my display|the page i have open)\b", re.I)
+
 DEFAULT_TOOLS = ",".join([
     "Read", "Glob", "Grep", "Edit", "Write", "WebSearch", "WebFetch", "Task", "TodoWrite",
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)",
@@ -114,8 +116,17 @@ def run(cfg: dict[str, str], task: str, on_step, confirmed: bool = False) -> dic
         "When you are done, reply with a short plain-text report of what you did and anything the user should know, "
         "in at most five sentences, no markdown."
     )
+    prompt = task
+    if TASK_MENTIONS_SCREEN_RE.search(task):
+        # the task is about something on screen: give the Operator a fresh look at it first
+        import screen
+        shot, info = screen.capture("window" if re.search(r"\b(this|that|the) (?:window|error|dialog|popup)\b|\bwindow\b", task, re.I) else "screen")
+        if shot:
+            prompt = (f"{task}\n\nA screenshot of {info}, taken just now, is at {shot}. Read it with the Read tool before "
+                      "you do anything, so you can see exactly what the user is looking at.")
+            log_line(f"       screenshot {shot.name} ({info})")
     cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", s["model"],
-           "--allowedTools", *s["tools"], "--append-system-prompt", system, task]
+           "--allowedTools", *s["tools"], "--append-system-prompt", system, prompt]
     log_line(f"START  {task}" + ("  (confirmed by the user)" if confirmed else ""))
     log_line(f"       dir={folder} model={s['model']} tools={len(s['tools'])}")
     started = time.time()

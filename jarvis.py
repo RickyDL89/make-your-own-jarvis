@@ -20,6 +20,7 @@ from pathlib import Path
 import agents
 import brain
 import scheduler
+import screen
 import skills
 import tasks
 
@@ -170,12 +171,41 @@ def persona(cfg: dict[str, str]) -> str:
     )
 
 
+_last_screen: tuple[float, str] | None = None  # (when, what she said about it), for follow-up questions
+
+
 def turn_context(cfg: dict[str, str], context: str | None = None) -> str:
     """What changes every message: the time, the user's notes, live data a skill just fetched."""
     parts = [f"The local date and time is {time.strftime('%A, %B %d, %Y, %I:%M %p')}.", skills.memory_prompt().strip()]
+    if _last_screen and time.time() - _last_screen[0] < 300:
+        parts.append(f"{int(time.time() - _last_screen[0])} seconds ago you looked at the user's screen and said: {_last_screen[1]}")
     if context:
         parts.append(context)
     return " ".join(p for p in parts if p)
+
+
+def look_at_screen(cfg: dict[str, str], text: str) -> str:
+    """Take a screenshot and answer the question about it, in EDI's voice."""
+    global _last_screen
+    title = cfg["JARVIS_CALLS_YOU"]
+    mode = "window" if screen.WANTS_WINDOW_RE.search(text) else "screen"
+    path, info = screen.capture(mode)
+    if not path:
+        return f"I couldn't capture the screen, {title}. {info}"
+    log(f"Screen: captured {info} -> {path.name}")
+    system = (persona(cfg) + " You have been given the path of a screenshot of the user's screen, taken just now. "
+              "Use the Read tool to look at it before answering. Answer the question about what is on the screen in one "
+              "to four spoken sentences; when asked to read something out, read the exact text. Never mention the file "
+              "path, the tool, or that it is a screenshot; speak as if you are looking at the screen.")
+    prompt = f"The user asked: {text}\nThe screenshot shows {info}. It is at: {path}\nRead it now and answer."
+    reply = brain.complete(cfg["CLAUDE_AGENT_MODEL"], system, prompt, tools=["Read"])
+    reply = reply or f"I couldn't make anything out, {title}."
+    _last_screen = (time.time(), reply)
+    with _lock:
+        _history.extend([{"role": "user", "content": text}, {"role": "assistant", "content": reply}])
+        del _history[:-16]
+        skills.save_history(list(_history))
+    return reply
 
 
 def system_prompt(cfg: dict[str, str]) -> str:
@@ -584,6 +614,18 @@ def respond(cfg: dict[str, str], text: str) -> dict:
             return {"reply": f"I couldn't put the briefing together, {title}. The reason is in the EDI window.", "error": "internal"}
         log(f"EDI:    {reply}  (briefing)")
         return {"reply": reply, "skill": "briefing"}
+    # Eyes: "what's on my screen", "what does this error say", "read this to me".
+    if screen.SCREEN_RE.search(text) and brain_kind(cfg) == "claude":
+        try:
+            reply = look_at_screen(cfg, text)
+        except brain.BrainError as err:
+            log(f"Screen: {err}")
+            reply = f"I couldn't get a look at the screen, {title}. {err}"
+        except Exception as err:  # noqa: BLE001 - keep EDI alive and report it
+            log(f"Screen failed: {err!r}")
+            reply = f"Something went wrong while I was looking at the screen, {title}. The details are in the EDI window."
+        log(f"EDI:    {reply}  (screen)")
+        return {"reply": reply, "skill": "screen"}
     # Take-over: "EDI, take over: ..." hands the task to Claude Code with tools, shown as the Operator.
     task_reply = AGENTS.handle_task_phrase(cfg, text, title, available=brain_kind(cfg) == "claude")
     if task_reply:

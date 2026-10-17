@@ -731,6 +731,8 @@ ABILITIES = (
     "or \"get a researcher to ...\", and you are told when that happens. You cannot spawn one yourself, so never say "
     "you are spawning or have spawned an agent; if the user seems to want one, tell them to say "
     "\"get a researcher to\" followed by the task. "
+    "Eyes: when the user asks what is on their screen, what an error or window says, or to read or summarise what "
+    "they are looking at, the system takes a screenshot and you answer from it. "
     "Scheduling: timers (\"set a timer for ten minutes\"), reminders (\"remind me at three to call the bank\"), standing "
     "orders (\"every weekday at seven, give me my briefing\"), \"what's scheduled\" and \"cancel the timer\" are handled by "
     "the system; the morning briefing (\"give me my briefing\") gathers weather, headlines, the rand and the day's schedule; "

@@ -68,6 +68,20 @@ while she is speaking. The setting is remembered next time.
 Protocols in [protocols.json](protocols.json) can run local programs too, with a `"run"` list next to `"open"`:
 `"run": ["outlook.exe"]`.
 
+## Her eyes: what's on your screen
+
+- **"What's on my screen?"** / **"What am I looking at?"** — the whole screen (all monitors).
+- **"What does this error say?"** / **"Read this to me."** / **"Summarise this page."** / **"What's wrong here?"** —
+  the active window. If the active window is EDI's own page she looks at the whole screen instead.
+- Follow-ups work for a few minutes: *"and what's the second line?"*
+- **"Take over: fix the error in that window"** — when a task mentions the screen or a window, the Operator gets a
+  fresh screenshot to look at before it starts.
+
+The capture uses Windows' own drawing APIs through a hidden PowerShell call (nothing to install), is downscaled to
+keep it quick, and is saved in `screens/` next to her (git-ignored, only the last four kept). A screenshot leaves the
+computer only as part of the request to Claude, the same as any image Claude Code reads. Whole-screen shots of two
+monitors are small on detail; for exact text, ask about *this window*.
+
 ## Timers, reminders and standing orders
 
 - **"Set a timer for ten minutes."** — "Your timer is up, sir."

@@ -22,7 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SESSION_FILE = ROOT / "brain_session.json"
 DEFAULT_MODEL = "claude-haiku-5-5"
-NO_TOOLS = ["--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", ""]
+ISOLATED = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", ""]  # no MCP, no settings: fast start
+NO_TOOLS = ["--tools", "", *ISOLATED]
 
 
 class BrainError(Exception):
@@ -220,9 +221,13 @@ class Session:
                 return " ".join(str(event.get("result") or "").split())
 
 
-def complete(model: str, system: str, prompt: str, timeout: float = 120) -> str:
-    """One-shot call with its own system prompt, for agents. Slower to start, but independent of EDI's conversation."""
-    cmd = ["claude", "-p", "--output-format", "json", "--model", model, *NO_TOOLS, "--no-session-persistence",
+def complete(model: str, system: str, prompt: str, timeout: float = 120, tools: list[str] | None = None) -> str:
+    """One-shot call with its own system prompt, for agents. Slower to start, but independent of EDI's conversation.
+
+    `tools` allows a few tools (for example ["Read"], so the model can look at a screenshot); otherwise none.
+    """
+    access = ["--allowedTools", *tools, *ISOLATED] if tools else NO_TOOLS
+    cmd = ["claude", "-p", "--output-format", "json", "--model", model, *access, "--no-session-persistence",
            "--system-prompt", system, prompt]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",  # noqa: S603
