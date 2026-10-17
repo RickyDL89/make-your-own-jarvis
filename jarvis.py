@@ -314,10 +314,25 @@ def brain_error(err: OpenRouterError, cfg: dict[str, str]) -> str:
 _voice_override: str | None = None  # set by a protocol with a "voice" field, until restart
 
 
+_last_voice_problem: str | None = None
+
+
 def speak(cfg: dict[str, str], text: str) -> tuple[bytes | None, str | None]:
+    """The whole clip at once (POST /api/tts)."""
+    response, problem = tts_open(cfg, text)
+    if problem:
+        return None, problem
+    with response:
+        return response.read(), None
+
+
+def tts_open(cfg: dict[str, str], text: str):
+    """Start a Fish Audio request and hand back the open response, so the bytes can be streamed as they arrive."""
+    global _last_voice_problem
     key = cfg.get("FISH_API_KEY")
     if not key:
-        return None, "No Fish Audio key yet, so you're hearing the backup voice. Add FISH_API_KEY to the .env file."
+        _last_voice_problem = "No Fish Audio key yet, so you're hearing the backup voice. Add FISH_API_KEY to the .env file."
+        return None, _last_voice_problem
     # The screen shows "EDI", but the voice engine would spell that out. "Edie" is spoken ee-dee.
     text = re.sub(r"\b(?:E\.D\.I\.|EDI)(?=\W|$)", "Edie", text)
     body = json.dumps({
@@ -334,20 +349,24 @@ def speak(cfg: dict[str, str], text: str) -> tuple[bytes | None, str | None]:
         "model": cfg["FISH_MODEL"],
     })
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - fixed https URL
-            return response.read(), None
+        response = urllib.request.urlopen(request, timeout=60)  # noqa: S310 - fixed https URL
+        _last_voice_problem = None
+        return response, None
     except urllib.error.HTTPError as err:
         detail = err.read()[:300].decode("utf-8", "replace")
         log(f"Fish Audio error {err.code}: {detail}")
         if err.code in (401, 403):
-            return None, "Fish Audio didn't accept the key. Check FISH_API_KEY in the .env file."
-        if err.code == 402:
-            return None, "Your Fish Audio API credit is empty. Add credit on fish.audio and EDI gets her voice back."
-        if err.code in (400, 404, 422):
-            return None, "Fish Audio couldn't use that voice. Check FISH_VOICE_ID and FISH_MODEL in the .env file."
-        return None, f"Fish Audio returned an error ({err.code}). Using the backup voice for now."
+            problem = "Fish Audio didn't accept the key. Check FISH_API_KEY in the .env file."
+        elif err.code == 402:
+            problem = "Your Fish Audio API credit is empty. Add credit on fish.audio and EDI gets her voice back."
+        elif err.code in (400, 404, 422):
+            problem = "Fish Audio couldn't use that voice. Check FISH_VOICE_ID and FISH_MODEL in the .env file."
+        else:
+            problem = f"Fish Audio returned an error ({err.code}). Using the backup voice for now."
     except (urllib.error.URLError, TimeoutError):
-        return None, "Can't reach Fish Audio right now. Using the backup voice."
+        problem = "Can't reach Fish Audio right now. Using the backup voice."
+    _last_voice_problem = problem
+    return None, problem
 
 
 # ---------------------------------------------------------------- protocols
@@ -444,6 +463,34 @@ class Handler(BaseHTTPRequestHandler):
                 # it would talk over the current one. It still gets to draw the agents.
                 events = [{**e, "speak": ""} if e.get("type") in ("agent_done", "announce") else e for e in events]
             self._json(200, {"seq": seq, "events": events, "agents": AGENTS.active()})
+        elif path == "/api/tts":
+            # Streaming speech: Fish Audio's MP3 bytes go to the page as they arrive, so the audio element
+            # starts playing after the first chunk instead of after the whole clip.
+            query = dict(pair.split("=", 1) for pair in self.path.split("?", 1)[1].split("&") if "=" in pair) if "?" in self.path else {}
+            text = urllib.parse.unquote_plus(query.get("text", ""))[:2000].strip()
+            if not text:
+                self._json(400, {"error": "Nothing to say."})
+                return
+            response, problem = tts_open(load_settings(), text)
+            if problem:
+                self._json(502, {"error": problem})
+                return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/mpeg")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                with response:
+                    while True:
+                        chunk = response.read(4096)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # she was interrupted; the page closed the stream
+        elif path == "/api/tts/check":
+            self._json(200, {"error": _last_voice_problem or "The voice stream stopped. Using the backup voice."})
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:

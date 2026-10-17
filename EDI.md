@@ -34,6 +34,17 @@ the agent fades away a few seconds later. Several agents can run at once.
 
 Agent roles and colours live at the top of [agents.py](agents.py).
 
+## How she speaks
+
+Her replies are streamed: the text is split into sentences, each sentence is fetched as a streaming MP3 that starts
+playing after the first chunk arrives, and the next sentence is already loading while she says this one. She starts
+talking well under a second after the brain answers, however long the reply. If Fish Audio fails, she finishes the
+sentence in the browser's voice and a red note says why.
+
+**Interrupting her:** with the wake word on, say **"EDI"** while she is talking and she stops at once. *"EDI, stop"*
+just silences her; *"EDI, what about tomorrow?"* cuts her off and answers the new question; a bare *"EDI"* makes her
+stop and listen. Holding Space or clicking the nebula interrupts her too.
+
 ## Talk to her without touching anything
 
 Click **WAKE WORD · OFF** at the top right of the page to turn it on. Then:

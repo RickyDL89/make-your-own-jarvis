@@ -232,7 +232,7 @@
   </aside>
 
   <footer>
-    <div class="hint">Hold <kbd>SPACE</kbd> or click the nebula to talk &middot; or turn on the wake word and just say &ldquo;EDI&rdquo; &middot; try &ldquo;test your agents&rdquo;</div>
+    <div class="hint">Hold <kbd>SPACE</kbd> or click the nebula to talk &middot; with the wake word on, just say &ldquo;EDI&rdquo;, even to interrupt her &middot; try &ldquo;test your agents&rdquo;</div>
     <form id="typeForm">
       <input id="typeBox" placeholder="Or type to EDI..." autocomplete="off">
       <button type="submit">SEND</button>
@@ -404,8 +404,9 @@ void main() {
     document.body.className = 'state-' + next;
     statusEl.textContent = LABELS[next];
     edi.energy = STATE_ENERGY[next];
+    bgStop();  // one recogniser at a time
     if (next === 'idle') setTimeout(() => { drainAnnouncements(); bgStart(); }, 250);
-    else bgStop();  // never listen to herself, or over another recogniser
+    else if (next === 'speaking') setTimeout(bgStart, 150);  // barge-in: her name interrupts her
   }
 
   function addLine(cls, who, text) {
@@ -895,11 +896,10 @@ void main() {
     if (audioCtx) return;
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioCtx.createMediaElementSource(voice);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
       samples = new Uint8Array(analyser.fftSize);
-      source.connect(analyser);
+      for (const v of voices) audioCtx.createMediaElementSource(v).connect(analyser);
       analyser.connect(audioCtx.destination);
     } catch {
       analyser = null;
@@ -908,7 +908,7 @@ void main() {
   }
   function meter() {
     let level = 0;
-    if (analyser && !voice.paused) {
+    if (analyser && voices.some((v) => !v.paused)) {
       analyser.getByteTimeDomainData(samples);
       let sum = 0;
       for (const v of samples) { const x = (v - 128) / 128; sum += x * x; }
@@ -918,12 +918,33 @@ void main() {
     requestAnimationFrame(meter);
   }
 
+  // Speech is streamed: the reply is split into sentences, each fetched as a streaming MP3 the audio
+  // element starts playing after the first chunk, while the next sentence is already prefetching on a
+  // second element. So she starts talking after a few hundred milliseconds instead of after the whole clip.
+  const voice2 = document.createElement('audio');
+  voice2.id = 'voice2';
+  document.body.append(voice2);
+  const voices = [voice, voice2];
   let speakToken = 0;
+  let currentSpeech = '';
   function stopSpeaking() {
     speakToken += 1;
-    voice.pause();
+    currentSpeech = '';
+    for (const v of voices) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch {} }
     if ('speechSynthesis' in window) speechSynthesis.cancel();
   }
+  function splitSentences(text) {
+    const raw = (text.match(/[^.!?]+(?:[.!?]+["')\]]*|$)/g) || [text]).map((p) => p.trim()).filter(Boolean);
+    const chunks = [];
+    let buf = '';
+    for (const part of raw) {
+      buf = (buf + ' ' + part).trim();
+      if (buf.length >= 60) { chunks.push(buf); buf = ''; }   // very short sentences ride with the next one
+    }
+    if (buf) chunks.push(buf);
+    return chunks.length ? chunks : [text];
+  }
+  const ttsUrl = (t) => '/api/tts?v=3&text=' + encodeURIComponent(t);
   function backupVoice(text) {
     return new Promise((resolve) => {
       if (!('speechSynthesis' in window)) return resolve();
@@ -934,33 +955,32 @@ void main() {
     });
   }
   async function speak(text) {
-    const token = ++speakToken;
+    stopSpeaking();
+    const token = speakToken;
+    currentSpeech = text;
     setState('speaking');
-    try {
-      const r = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      if (!r.ok) {
+    const chunks = splitSentences(text);
+    if (audioCtx && audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch {} }
+    voices[0].src = ttsUrl(chunks[0]);
+    for (let i = 0; i < chunks.length; i++) {
+      if (token !== speakToken) return;
+      const el = voices[i % 2];
+      if (i + 1 < chunks.length) { voices[(i + 1) % 2].src = ttsUrl(chunks[i + 1]); voices[(i + 1) % 2].load(); }  // prefetch
+      try {
+        await el.play();
+        await new Promise((resolve) => { el.onended = resolve; el.onpause = resolve; el.onerror = resolve; });
+        if (el.error) throw new Error('voice stream failed');
+      } catch (err) {
+        if (token !== speakToken) return;
+        // the voice server said no (bad key, no credit, offline): say the rest with the browser's voice
         let message = 'The Fish Audio voice is unavailable, so EDI is using the backup voice.';
-        try { message = (await r.json()).error || message; } catch {}
-        throw new Error(message);
+        try { const r = await fetch('/api/tts/check'); if (r.ok) message = (await r.json()).error || message; } catch {}
+        toast(message);
+        await backupVoice(chunks.slice(i).join(' '));
+        break;
       }
-      const blob = await r.blob();
-      if (token !== speakToken) return;
-      if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume();
-      const src = URL.createObjectURL(blob);
-      voice.src = src;
-      await voice.play();
-      await new Promise((resolve) => { voice.onpause = resolve; voice.onerror = resolve; });
-      URL.revokeObjectURL(src);
-    } catch (err) {
-      if (token !== speakToken) return;
-      toast(err.message);
-      await backupVoice(text);
     }
-    if (token === speakToken) setState('idle');
+    if (token === speakToken) { currentSpeech = ''; setState('idle'); }
   }
 
   // ---- talking to the brain
@@ -1103,7 +1123,9 @@ void main() {
 
   function bgStart() {
     if (!wakeOn || bgActive || listening || busy || !Recognition) return;
-    if (state !== 'idle') return;
+    // idle: listening for her name. speaking: listening for her name to interrupt her (barge-in).
+    const barge = state === 'speaking';
+    if (state !== 'idle' && !barge) return;
     const r = new Recognition();
     r.lang = 'en-US';
     r.continuous = true;
@@ -1113,10 +1135,22 @@ void main() {
         const result = e.results[i];
         const transcript = result[0].transcript;
         const m = WAKE_RE.exec(transcript);
-        if (!m || !result.isFinal) continue;
+        if (!m) continue;
         const after = transcript.slice(m.index + m[0].length).trim();
+        const words = after.split(/\s+/).filter(Boolean).length;
+        if (barge) {
+          // act on interim results so the interruption is instant, but if she is saying her own name
+          // right now, only a name followed by words counts, so she doesn't interrupt herself
+          if (/\b(edi|edie|eddie)\b/i.test(currentSpeech) && words === 0) continue;
+          bgStop();
+          stopSpeaking();
+          if (/^(stop|quiet|enough|shut up|that's enough|never ?mind|cancel)\b/i.test(after)) { setState('idle'); return; }
+          if (words >= 2) send(after); else { chime(); startListening(true); }
+          return;
+        }
+        if (!result.isFinal) continue;
         bgStop();
-        if (after.split(/\s+/).filter(Boolean).length >= 2) {
+        if (words >= 2) {
           send(after);            // "EDI, what's the weather tomorrow" in one breath
         } else {
           chime();                // just "EDI": acknowledge and listen for one sentence
@@ -1137,7 +1171,7 @@ void main() {
       if (bgRec !== r) return;    // we stopped it on purpose
       bgActive = false;
       bgRec = null;
-      setTimeout(bgStart, 400);   // Chrome ends recognition now and then; just start again
+      setTimeout(bgStart, barge ? 150 : 400);   // Chrome ends recognition now and then; just start again
     };
     try {
       r.start();
