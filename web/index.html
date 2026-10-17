@@ -395,6 +395,7 @@ void main() {
   let busy = false;
   let state = 'idle';
   let wakeOn = false;      // the wake word toggle in the header
+  let localWake = false;   // the server hears the wake word itself through the microphone (offline)
   let bgRec = null;        // background recogniser that listens for "EDI"
   let bgActive = false;
   const announcements = [];  // things agents want EDI to say, once she's free
@@ -449,6 +450,8 @@ void main() {
       $('dotVoice').className = 'dot ' + (s.voice ? 'on' : 'off');
       $('dotBrain').className = 'dot ' + (s.brain ? 'on' : 'off');
       if (s.brainName) $('brainName').textContent = s.brainName.toUpperCase();
+      localWake = !!s.localWake;
+      if (localWake) { $('wakeLabel').textContent = 'WAKE WORD · OFFLINE MIC'; $('wakeToggle').classList.add('on'); $('dotWake').className = 'dot on'; }
       if (!s.brain) toast('No brain yet. Check the EDI window for what is missing.');
     } catch {
       toast('Lost contact with EDI. Is the EDI window still open?');
@@ -804,6 +807,23 @@ void main() {
       if (ev.speak) { announce(ev.speak, ev.seq); edi.pulse = 1; }
       return;
     }
+    if (ev.type === 'wake') {
+      // the microphone on the server heard her name (the offline wake word)
+      if (Date.now() / 1000 - ev.at > 4 || !awake || !isSpeaker()) return;
+      if (listening) return;
+      stopSpeaking();
+      bgStop();
+      edi.pulse = 1;
+      if (ev.text) {               // "Edie, what time is it" in one breath: the sentence came with it
+        showHeard(ev.text);
+        send(ev.text);
+      } else {                     // just "Edie": chime and listen here
+        chime();
+        showHeard('wake word');
+        startListening(true);
+      }
+      return;
+    }
     const a = agentsById.get(ev.id);
     if (ev.type === 'message') {
       const fromEdi = ev.from === 'EDI';
@@ -1139,6 +1159,7 @@ void main() {
   }
 
   function bgStart() {
+    if (localWake) return;  // the server's microphone does this job; two listeners would answer twice
     if (!wakeOn || bgActive || listening || busy || !Recognition) return;
     // idle: listening for her name. speaking: listening for her name to interrupt her (barge-in).
     const barge = state === 'speaking';
@@ -1216,6 +1237,10 @@ void main() {
   }
 
   $('wakeToggle').addEventListener('click', () => {
+    if (localWake) {
+      toast('EDI hears her name through the microphone herself, offline, even with this tab in the background. Set EDI_LOCAL_WAKE=0 in .env to use the browser wake word instead.');
+      return;
+    }
     if (!Recognition) {
       toast('The wake word needs Chrome or Edge.');
       return;

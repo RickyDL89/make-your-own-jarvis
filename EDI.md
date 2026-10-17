@@ -140,8 +140,28 @@ Guardrails:
 - **"What do you remember?"** — she reads her notes back.
 - **"Forget about my car"** — drops matching notes. **"Forget everything"** — wipes them.
 
-Notes and the last few exchanges are kept in `memory.json` next to her, which is git-ignored.
-She also picks the conversation up where it left off after a restart.
+She also notes things herself. When you mention something durable in passing ("my wife's name is Lerato",
+"I usually go to gym on Tuesdays"), a quick background model writes it down in the third person, skipping
+questions, one-off requests and anything she already knows; the EDI window shows a `Noted:` line when it
+happens. `EDI_AUTO_MEMORY=0` in `.env` turns that off. Everything lives in `memory.json` next to her, git-ignored.
+
+**The journal:** every exchange is logged by day in `journal/`, so *"what did we talk about yesterday?"*,
+*"what did I ask you this morning?"* or *"what did we discuss on Monday?"* get a real answer.
+
+## The wake word, offline
+
+With `pip install vosk sounddevice` done (already done on this machine), EDI hears her name through the
+microphone herself: offline, always, with the browser tab in the background or no tab at all. On first start she
+downloads a small English speech model (about 40 MB) into `models/`. The header pill then reads
+**WAKE WORD · OFFLINE MIC**.
+
+- A page is open → she chimes there and listens with the browser's recogniser (it hears whole sentences better).
+- No page is open → she chimes through the speakers, listens through the microphone, and answers through the
+  speakers. No browser needed.
+
+`.env`: `EDI_LOCAL_WAKE=0` to switch back to the browser wake word, `EDI_WAKE_WORDS` to change what she listens
+for (default `edie, eddie, hey edie, hey eddie, e d i`), `EDI_MIC` to pick a microphone by part of its name,
+`EDI_HEADLESS=0` to stop her answering through the speakers.
 
 ## Live information (all free, no keys needed)
 

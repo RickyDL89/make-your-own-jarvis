@@ -23,6 +23,7 @@ import scheduler
 import screen
 import skills
 import tasks
+import wake
 
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
@@ -42,6 +43,12 @@ DEFAULTS = {
     "BRAIN": "",  # "claude" or "openrouter". Empty means: Claude Code if it's installed, else OpenRouter
     "CLAUDE_MODEL": brain.DEFAULT_MODEL,  # the Claude Code brain for conversation. Haiku is quick, which matters when it's spoken
     "CLAUDE_AGENT_MODEL": "claude-opus-5-5",  # the model agents and tasks think with, where quality matters more than speed
+    "CLAUDE_MEMORY_MODEL": "claude-haiku-5-5",  # the quick model that notes facts about the user in the background
+    "EDI_AUTO_MEMORY": "1",  # "0" and she only remembers what you tell her to
+    "EDI_LOCAL_WAKE": "",  # "1" hear the wake word offline through the microphone (needs: pip install vosk sounddevice); "0" off; empty: on when installed
+    "EDI_WAKE_WORDS": "",  # what to listen for, comma-separated. Default: edie, eddie, hey edie, hey eddie, e d i
+    "EDI_MIC": "",  # part of the microphone's name, if not the default one
+    "EDI_HEADLESS": "1",  # with no page open: listen and answer through the speakers after the wake word
     "JARVIS_CALLS_YOU": "sir",
     "EDI_LOCATION": "",  # your city, for the weather. Empty means: work it out from the connection
     "GOOGLE_CALENDAR_ICS": "",  # your calendar's secret iCal address (several: comma-separated)
@@ -477,12 +484,15 @@ class Handler(BaseHTTPRequestHandler):
                 "voice": bool(cfg.get("FISH_API_KEY")),
                 "brain": kind == "claude" or bool(cfg.get("OPENROUTER_API_KEY")),
                 "brainName": f"Claude {cfg['CLAUDE_MODEL'].split('-')[1]}" if kind == "claude" else "OpenRouter",
+                "localWake": bool(WAKE and WAKE.ok),
                 "model": cfg["CLAUDE_MODEL"] if kind == "claude" else cfg["OPENROUTER_MODEL"],
                 "calls": cfg["JARVIS_CALLS_YOU"],
                 "protocols": [p["say"] for p in load_protocols()],
             })
         elif path == "/api/events":
             # The HUD polls this to draw agents and the messages flying between them and EDI.
+            global _last_poll
+            _last_poll = time.time()
             query = dict(pair.split("=", 1) for pair in self.path.split("?", 1)[1].split("&") if "=" in pair) if "?" in self.path else {}
             try:
                 since = int(query.get("since", ""))
@@ -508,6 +518,8 @@ class Handler(BaseHTTPRequestHandler):
             if problem:
                 self._json(502, {"error": problem})
                 return
+            global _last_tts
+            _last_tts = (time.time(), text)
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/mpeg")
@@ -673,6 +685,7 @@ def respond(cfg: dict[str, str], text: str) -> dict:
     skill = skills.handle(cfg, text)
     if skill and skill.reply:
         log(f"EDI:    {skill.reply}  ({skill.name})")
+        skills.journal_write(text, skill.reply)
         return {"reply": skill.reply, "skill": skill.name}
     if not has_brain:
         return {"reply": f"My brain isn't connected yet, {title}. Install Claude Code, or add OPENROUTER_API_KEY to the .env file, and restart me.", "error": "brain"}
@@ -688,7 +701,45 @@ def respond(cfg: dict[str, str], text: str) -> dict:
         log(f"Unexpected error: {err!r}")
         return {"reply": f"Something went wrong in my head, {title}. The details are in the EDI window.", "error": "internal"}
     log(f"EDI:    {reply}" + (f"  ({skill.name})" if skill else ""))
+    after_reply(cfg, text, reply)
     return {"reply": reply, **({"skill": skill.name} if skill else {})}
+
+
+PERSONAL_RE = re.compile(r"\b(my|i'm|i am|i've|i have|i live|i work|i like|i love|i hate|i prefer|i usually|i always|i never|we|our|mine|me)\b", re.I)
+QUESTION_RE = re.compile(r"^\s*(what|how|why|when|where|who|which|can|could|would|will|do|does|did|is|are|should|tell me|give me|remind me|set|open|spawn|take over)\b|\?\s*$", re.I)
+NOTE_SYSTEM = (
+    "You extract durable facts about the user from one exchange with their voice assistant, EDI. Reply with JSON only, "
+    'no prose, no code fences: {"facts": ["..."]}. Keep a fact only if it will still be true and useful weeks from now: '
+    "names and relationships, birthdays and dates, where they live and work, their car, pets, preferences and dislikes, "
+    "routines, health notes they volunteer, projects and goals. Never keep questions, one-off requests, the weather, "
+    "timers, anything about EDI herself, or anything already in the known facts. Phrase each fact in the third person "
+    "about the user, short. Usually zero or one fact, never more than three; an empty list is the normal answer."
+)
+
+
+def note_facts(cfg: dict[str, str], text: str, reply: str) -> None:
+    """Runs after a reply, in the background: remember durable things the user mentioned in passing."""
+    try:
+        known = skills.load_memory()["facts"][-60:]
+        prompt = (f"Known facts: {' | '.join(str(f) for f in known) or 'none'}\n\nUser said: {text}\nEDI replied: {reply}")
+        if brain_kind(cfg) == "claude":
+            raw = brain.complete(cfg["CLAUDE_MEMORY_MODEL"], NOTE_SYSTEM, prompt, timeout=60)
+        else:
+            raw = openrouter_llm(cfg, [{"role": "system", "content": NOTE_SYSTEM}, {"role": "user", "content": prompt}], max_tokens=300)
+        start, end = raw.find("{"), raw.rfind("}")
+        facts = (json.loads(raw[start:end + 1]) or {}).get("facts") if start >= 0 else None
+        added = skills.add_facts([f for f in facts if isinstance(f, str)][:3]) if isinstance(facts, list) else []
+        for fact in added:
+            log(f"Noted:  {fact}")
+    except Exception as err:  # noqa: BLE001 - a missed note is no reason to bother anyone
+        log(f"Note-taking skipped: {str(err)[:100]}")
+
+
+def after_reply(cfg: dict[str, str], text: str, reply: str) -> None:
+    """Bookkeeping once EDI has answered: the journal, and a background look for facts worth keeping."""
+    skills.journal_write(text, reply)
+    if cfg.get("EDI_AUTO_MEMORY", "1") != "0" and PERSONAL_RE.search(text) and not QUESTION_RE.search(text) and len(text.split()) >= 4:
+        threading.Thread(target=note_facts, args=(cfg, text, reply), daemon=True, name="note-facts").start()
 
 
 def briefing(cfg: dict[str, str]) -> str:
@@ -704,6 +755,52 @@ def briefing(cfg: dict[str, str]) -> str:
                           "weather, the main headlines, the rand, anything scheduled today, anything that happened while "
                           "they were away, and one short closing line. Plain spoken English, no lists."),
                  remember=True)
+
+
+_last_poll = 0.0          # when a page last asked for events: tells us whether anyone is at the HUD
+_last_tts: tuple[float, str] = (0.0, "")   # when she last spoke, and what: so the local wake word ignores her own voice
+WAKE: wake.Listener | None = None
+
+
+def local_wake_enabled(cfg: dict[str, str]) -> bool:
+    setting = cfg.get("EDI_LOCAL_WAKE", "")
+    return wake.available() and setting != "0" if setting != "1" else wake.available()
+
+
+def on_wake(cfg: dict[str, str], rest: str = "") -> bool:
+    """The microphone heard her name, perhaps followed by a sentence. True means: nobody is at the page and
+    nothing followed the name, so capture the command here too."""
+    if time.time() - _last_tts[0] < 12 and re.search(r"\bEdie\b", _last_tts[1]):
+        log("Wake: that was her own voice, ignoring")
+        return False
+    has_command = len(rest.split()) >= 2
+    AGENTS.emit("wake", at=time.time(), text=rest if has_command else "")
+    page_open = time.time() - _last_poll < 5
+    if page_open or cfg.get("EDI_HEADLESS", "1") == "0":
+        return False
+    if has_command:
+        threading.Thread(target=on_spoken_command, args=(cfg, rest), daemon=True).start()
+        return False
+    wake.play_wav(wake.ensure_chime())
+    return True
+
+
+def on_spoken_command(cfg: dict[str, str], text: str) -> None:
+    """Headless: answer through the speakers."""
+    cfg = load_settings()
+    reply = respond(cfg, text).get("reply", "")
+    if not reply:
+        return
+    audio, problem = speak(cfg, reply)
+    if not audio:
+        log(f"Wake: no voice ({problem})")
+        return
+    path = wake.MODELS / "reply.mp3"
+    path.write_bytes(audio)
+    try:
+        wake.play_mp3(path)
+    except Exception as err:  # noqa: BLE001
+        log(f"Wake: playback failed: {err!r}")
 
 
 SCHEDULER = scheduler.Scheduler(respond=lambda cfg, text: respond(cfg, text).get("reply", ""),
@@ -766,6 +863,13 @@ def main() -> None:
     SCHEDULER.start()
     if SCHEDULER.jobs:
         print(f"    Scheduled: {len(SCHEDULER.jobs)} job(s), next: {SCHEDULER.next_summary()}")
+    global WAKE
+    if local_wake_enabled(cfg):
+        WAKE = wake.Listener(cfg, on_wake=lambda rest: on_wake(load_settings(), rest), on_command=lambda t: on_spoken_command(cfg, t), log=log)
+        WAKE.start()
+        print("    Wake word: offline, through the microphone (say her name, no tab needed)")
+    elif cfg.get("EDI_LOCAL_WAKE", "") != "0":
+        print("    Wake word: in the browser only. For an offline one:  pip install vosk sounddevice")
     if not NO_BROWSER:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:

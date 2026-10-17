@@ -94,7 +94,74 @@ def memory_prompt() -> str:
     facts = load_memory()["facts"]
     if not facts:
         return ""
-    return "Things the user asked you to remember: " + " | ".join(str(f) for f in facts) + ". "
+    return "Things you know about the user, some they asked you to remember and some you noted yourself: " + " | ".join(str(f) for f in facts[-60:]) + ". "
+
+
+def add_facts(new: list[str]) -> list[str]:
+    """Add facts that aren't already known (same words, or nearly). Returns the ones actually added."""
+    memory = load_memory()
+    known = [set(_words(f).split()) for f in memory["facts"]]
+    added = []
+    for fact in new:
+        fact = " ".join(str(fact).split()).strip().rstrip(".")
+        if len(fact) < 6:
+            continue
+        words = set(_words(fact).split())
+        if any(words == k or (len(words & k) / max(1, len(words | k))) > 0.7 for k in known):
+            continue
+        memory["facts"].append(fact)
+        known.append(words)
+        added.append(fact)
+    if added:
+        memory["facts"] = memory["facts"][-120:]
+        save_memory(memory)
+    return added
+
+
+# ---------------------------------------------------------------- the journal: what was said, day by day
+
+JOURNAL_DIR = ROOT / "journal"
+JOURNAL_RE = re.compile(r"\b(what (?:did|have) (?:we|i|you)(?: and i)? (?:talk|chat|speak|discuss|say|tell|ask|cover|do)\w*(?: about| you| me)?|"
+                        r"remind me what (?:we|i) (?:said|discussed|talked about)|what was (?:that|it) (?:we|i) (?:said|asked|discussed))\b.*\b"
+                        r"(yesterday|today|this morning|last night|earlier|on (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|last (?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", re.I)
+
+
+def journal_write(user_text: str, reply: str) -> None:
+    try:
+        JOURNAL_DIR.mkdir(exist_ok=True)
+        with (JOURNAL_DIR / f"{time.strftime('%Y-%m-%d')}.log").open("a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%H:%M')}  You: {' '.join(user_text.split())}\n{time.strftime('%H:%M')}  EDI: {' '.join(reply.split())}\n")
+    except OSError as err:
+        log(f"Journal: {err}")
+
+
+def journal_skill(text: str, you: str) -> Result | None:
+    m = JOURNAL_RE.search(text)
+    if not m:
+        return None
+    when = m.group(2).lower()
+    from datetime import date, timedelta  # local import keeps the module's top tidy
+    today = date.today()
+    days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    if when == "yesterday" or when == "last night":
+        targets = [today - timedelta(days=1)]
+    elif when == "last week":
+        targets = [today - timedelta(days=d) for d in range(7, 14)]
+    elif when.startswith("on ") or when.startswith("last "):
+        idx = days[when.split()[-1]]
+        back = (today.weekday() - idx) % 7 or 7
+        targets = [today - timedelta(days=back)]
+    else:
+        targets = [today]
+    chunks = []
+    for d in targets:
+        path = JOURNAL_DIR / f"{d.isoformat()}.log"
+        if path.exists():
+            chunks.append(f"{d.strftime('%A %d %B')}:\n" + path.read_text(encoding="utf-8")[-6000:])
+    if not chunks:
+        return Result("journal", reply=f"I have no record of us talking {when}, {you}.")
+    return Result("journal", context="The user's conversation log for the period they asked about, newest last: " + "\n".join(chunks)[-9000:]
+                  + " Answer their question from it in a few spoken sentences, summarising rather than reading it back.")
 
 
 # "remember that X" and "remember my X" are instructions. "remember when/how/what..." is a question for the brain.
@@ -790,6 +857,7 @@ def handle(cfg: dict[str, str], text: str) -> Result | None:
     """Decide whether EDI can do something with what was said. None means: just chat."""
     you = cfg["JARVIS_CALLS_YOU"]
     for skill in (lambda t, y: memory_skill(t, y),
+                  lambda t, y: journal_skill(t, y),
                   lambda t, y: autostart_skill(t, y),
                   lambda t, y: launcher_skill(t, y),
                   lambda t, y: weather_skill(cfg, t, y),

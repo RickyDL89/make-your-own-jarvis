@@ -12,3 +12,5 @@ brain_session.json
 tasks.log
 schedules.json
 screens/
+journal/
+models/
