@@ -1040,6 +1040,7 @@ void main() {
         else interim += result[0].transcript;
       }
       showExchange((heard + interim).trim() || '...', '');
+      showHeard('');
     };
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -1093,7 +1094,23 @@ void main() {
 
   // ---- wake word: say "EDI" and she listens, no keys needed
   // Speech recognition hears the name in a few different ways, so accept all of them.
-  const WAKE_RE = /\b(?:hey |ok |okay )?(?:edi|eddie|edie|eedee|eedie|e\.? ?d\.? ?i\.?)\b[,.!?]?/i;
+  const WAKE_RE = /\b(?:hey |ok |okay |hi )?(?:edi|eddie|edie|eddy|edy|eedee|eedie|eedi|eady|idi|iddy|80|e\.? ?d\.? ?i\.?|ed e|ed ee)\b[,.!?]?/i;
+
+  // what the wake-word recogniser is doing and hearing, so it can be seen rather than guessed at
+  const heardEl = document.createElement('div');
+  heardEl.id = 'heard';
+  heardEl.style.cssText = 'min-height:16px;font-size:13px;letter-spacing:0.08em;color:var(--muted);opacity:0.8;';
+  statusEl.after(heardEl);
+  let heardTimer;
+  function showHeard(text) {
+    heardEl.textContent = text ? 'heard: ' + text : '';
+    clearTimeout(heardTimer);
+    if (text) heardTimer = setTimeout(() => { heardEl.textContent = ''; }, 4000);
+  }
+  function wakeStatus(what) {
+    if (!wakeOn) return;
+    $('wakeLabel').textContent = 'WAKE WORD · ON · ' + what;
+  }
 
   function chime() {
     // A quick two-note "yes?" so she acknowledges instantly, without a round trip to the voice engine.
@@ -1125,17 +1142,20 @@ void main() {
     if (!wakeOn || bgActive || listening || busy || !Recognition) return;
     // idle: listening for her name. speaking: listening for her name to interrupt her (barge-in).
     const barge = state === 'speaking';
-    if (state !== 'idle' && !barge) return;
+    if (state !== 'idle' && !barge) { wakeStatus('paused'); return; }
     const r = new Recognition();
     r.lang = 'en-US';
     r.continuous = true;
     r.interimResults = true;
+    r.onstart = () => wakeStatus(barge ? 'interrupt' : 'listening');
     r.onresult = (e) => {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const result = e.results[i];
         const transcript = result[0].transcript;
+        if (result.isFinal || barge) showHeard(transcript.trim());
         const m = WAKE_RE.exec(transcript);
         if (!m) continue;
+        console.log('[wake]', barge ? 'barge-in' : 'wake', JSON.stringify(transcript));
         const after = transcript.slice(m.index + m[0].length).trim();
         const words = after.split(/\s+/).filter(Boolean).length;
         if (barge) {
@@ -1165,12 +1185,16 @@ void main() {
         try { localStorage.removeItem('edi-wake'); } catch {}
         wakeSetUI();
         toast('Microphone blocked, so the wake word is off. Allow the microphone (icon left of the address bar) and turn it on again.');
+      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        console.warn('[wake] recogniser error', e.error);
+        wakeStatus('error: ' + e.error);
       }
     };
     r.onend = () => {
       if (bgRec !== r) return;    // we stopped it on purpose
       bgActive = false;
       bgRec = null;
+      wakeStatus('restarting');
       setTimeout(bgStart, barge ? 150 : 400);   // Chrome ends recognition now and then; just start again
     };
     try {
@@ -1188,6 +1212,7 @@ void main() {
     bgRec = null;
     bgActive = false;
     try { r.abort(); } catch {}
+    wakeStatus('paused');
   }
 
   $('wakeToggle').addEventListener('click', () => {
