@@ -584,6 +584,8 @@ def respond(cfg: dict[str, str], text: str) -> dict:
     """
     global _voice_override
     title = cfg["JARVIS_CALLS_YOU"]
+    # Phones and Word-style keyboards send curly quotes; every phrase pattern expects straight ones.
+    text = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     log(f"You:    {text}")
     protocol = match_protocol(text)
     if protocol:

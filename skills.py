@@ -552,9 +552,15 @@ def google_skill(cfg: dict[str, str], text: str, you: str) -> Result | None:
             m = MAIL_FROM_RE.search(text)
             parts.append(google.describe_mail(feed, m.group(1).strip() if m else ""))
     except urllib.error.HTTPError as err:
-        log(f"Google: HTTP {err.code} {err.reason}")
+        log(f"Google: HTTP {err.code} {err.reason} ({err.url[:60] if err.url else ''}...)")
+        if err.code == 404 and "/calendar/ical/" in (err.url or ""):
+            if "/public/" in err.url:
+                return Result("google", reply=f"That calendar address is the public one, {you}, which Google won't serve. In Google Calendar settings, copy the Secret address in iCal format instead, the one with private in it, and put that in the .env file.")
+            return Result("google", reply=f"Google says that calendar address doesn't exist, {you}. Copy the Secret address in iCal format again from Google Calendar settings into the .env file.")
         if err.code in (401, 403):
-            return Result("google", reply=f"Google turned me away, {you}. Check GMAIL_ADDRESS and GMAIL_APP_PASSWORD in the .env file, or the calendar address.")
+            if "mail.google.com" in (err.url or ""):
+                return Result("google", reply=f"Gmail turned me away, {you}. Check GMAIL_ADDRESS and GMAIL_APP_PASSWORD in the .env file; the app password needs 2-step verification on.")
+            return Result("google", reply=f"Google turned me away, {you}. Check the calendar address in the .env file.")
         return Result("google", reply=f"Google isn't answering right now, {you}.")
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as err:
         log(f"Google: {err!r}")
